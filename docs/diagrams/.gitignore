@@ -1,0 +1,4 @@
+# Ignore temporary Graphviz files
+*.gv
+*.dot
+

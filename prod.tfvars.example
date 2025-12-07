@@ -1,0 +1,43 @@
+# Example production variables (fill with your real values; do not commit secrets)
+
+project_name = "envelope"
+environment  = "prod"
+region       = "eu-west-2"
+vpc_cidr     = "10.0.0.0/16"
+availability_zones = ["eu-west-2a", "eu-west-2b"]
+
+# App / web
+cors_allowed_origins       = "https://app.envelope.example,https://admin.envelope.example"
+app_debug                  = "false"
+octane_server              = "swoole"
+sanctum_stateful_domains   = "app.envelope.example,admin.envelope.example"
+session_domain             = ".envelope.example"
+nuxt_public_api_protocol   = "https"
+nuxt_public_api_port       = ""
+extra_hosts                = []
+nuxt_api_base_server       = ""
+node_tls_reject_unauthorized = "1"
+app_key                    = "replace-with-base64-app-key"
+
+# ALB / TLS / WAF
+acm_certificate_arn        = "arn:aws:acm:eu-west-2:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+alb_access_logs_bucket     = "envelope-alb-logs"
+alb_web_acl_arn            = "" # optional
+enable_alb_deletion_protection = true
+
+# Database
+db_username                    = "appuser"
+db_name                        = "envelope"
+manage_db_password             = true
+db_password                    = null   # only set when manage_db_password=false
+db_password_secret_arn_override = ""    # only set when manage_db_password=false
+backup_retention_period        = 7
+preferred_backup_window        = "02:00-03:00"
+preferred_maintenance_window   = "Sun:03:00-Sun:04:00"
+rds_deletion_protection        = true
+rds_max_allocated_storage      = 200
+
+# Images (pin to immutable tags or digests)
+api_image_tag    = "v1.2.3"
+tenant_image_tag = "v1.2.3"
+hq_image_tag     = "v1.2.3"

@@ -1,0 +1,186 @@
+services:
+  # -------------------------------------------------------------------------
+  # Backend Services (Laravel)
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    image: envelope-api
+    container_name: envelope_api
+    restart: unless-stopped
+    ports:
+      - "8016:8000" # Octane
+      - "8080:8080" # Reverb
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      DB_HOST: mysql
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      REDIS_HOST: redis
+      OCTANE_SERVER: swoole
+      # Allow CORS from frontend apps
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:3001,http://localhost:3002"
+    volumes:
+      - ../api:/var/www/html
+    develop:
+      watch:
+        - action: sync
+          path: ../api
+          target: /var/www/html
+          ignore:
+            - vendor/
+            - node_modules/
+            - .git/
+        - action: rebuild
+          path: ../api/composer.lock
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - envelope_net
+
+  worker:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    image: envelope-api
+    container_name: envelope_worker
+    restart: unless-stopped
+    command: ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/worker.conf"]
+    environment:
+      APP_ENV: local
+      DB_HOST: mysql
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      REDIS_HOST: redis
+    volumes:
+      - ../api:/var/www/html
+    develop:
+      watch:
+        - action: sync
+          path: ../api
+          target: /var/www/html
+          ignore:
+            - vendor/
+            - node_modules/
+            - .git/
+        - action: rebuild
+          path: ../api/composer.lock
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - envelope_net
+
+  # -------------------------------------------------------------------------
+  # Frontend Services (Nuxt)
+  # -------------------------------------------------------------------------
+  tenant:
+    build:
+      context: ../tenant
+      dockerfile: Dockerfile
+    image: envelope-tenant
+    container_name: envelope_tenant
+    restart: unless-stopped
+    ports:
+      - "3001:3000" # Mapped to 3001 to avoid conflict with HQ
+    environment:
+      NUXT_API_BASE_SERVER: http://api:8000/api/v1
+      NUXT_PUBLIC_API_BASE_CLIENT: http://localhost:8016/api/v1
+    develop:
+      watch:
+        - action: sync
+          path: ../tenant
+          target: /app
+          ignore:
+            - node_modules/
+            - .git/
+            - .output/
+            - .nuxt/
+        - action: rebuild
+          path: ../tenant/package.json
+    depends_on:
+      - api
+    networks:
+      - envelope_net
+
+  hq:
+    build:
+      context: ../hq
+      dockerfile: Dockerfile
+    image: envelope-hq
+    container_name: envelope_hq
+    restart: unless-stopped
+    ports:
+      - "3002:3000" # Mapped to 3002
+    environment:
+      NUXT_API_BASE_SERVER: http://api:8000/api/v1
+      NUXT_PUBLIC_API_BASE_CLIENT: http://localhost:8016/api/v1
+      BASE_DOMAIN: localhost
+      BASE_URL: http://localhost:3002
+    develop:
+      watch:
+        - action: sync
+          path: ../hq
+          target: /app
+          ignore:
+            - node_modules/
+            - .git/
+            - .output/
+            - .nuxt/
+        - action: rebuild
+          path: ../hq/package.json
+    depends_on:
+      - api
+    networks:
+      - envelope_net
+
+  # -------------------------------------------------------------------------
+  # Infrastructure Services
+  # -------------------------------------------------------------------------
+  mysql:
+    image: mariadb:10.11
+    container_name: envelope_mysql
+    restart: unless-stopped
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: envelope
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - envelope_net
+
+  redis:
+    image: redis:alpine
+    container_name: envelope_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - envelope_net
+
+  mailpit:
+    image: axllent/mailpit
+    container_name: envelope_mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # UI
+    networks:
+      - envelope_net
+
+networks:
+  envelope_net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
