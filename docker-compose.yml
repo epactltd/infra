@@ -139,13 +139,10 @@ services:
     environment:
       NODE_ENV: development
       APP_ENV: ${APP_ENV:-local}
-      PORT: 3000
+      PORT: 3001
       BASE_URL: ${TENANT_BASE_URL:-http://localhost:3001}
       TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY:-}
-      # API Configuration
-      NUXT_API_BASE_SERVER: http://api:8000/api/v1
-      NUXT_PUBLIC_API_BASE_CLIENT: http://localhost:${OCTANE_HOST_PORT:-8008}/api/v1
       # Reverb Configuration
       REVERB_APP_KEY: ${REVERB_APP_KEY:-}
       REVERB_HOST: ${REVERB_HOST:-localhost}
