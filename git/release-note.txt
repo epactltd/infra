@@ -1,0 +1,30 @@
+This release introduces several new features, improves existing ones, and fixes some bugs.
+
+Key Features:
+
+New feature: Support for importing and exporting data in CSV format.
+Improved feature: The performance of the search function has been significantly improved.
+Bug fix: A bug that caused the application to crash has been fixed.
+Compatibility:
+
+This release is compatible with all major operating systems, including Windows, macOS, and Linux.
+
+Installation:
+
+To install the new release, please download the installer from our website and run it. Alternatively, you can update your existing installation using the built-in update mechanism.
+
+Documentation:
+
+The documentation for the new release can be found on our website.
+
+Known Issues:
+
+There are no known issues in this release.
+
+Changelog:
+
+The complete changelog for this release can be found on our GitHub repository.
+
+Thank you for using our software!
+
+We hope you enjoy the new features in this release. Please let us know if you have any feedback.
