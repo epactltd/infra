@@ -52,7 +52,7 @@ services:
       MAIL_USERNAME: ${MAIL_USERNAME}
       MAIL_PASSWORD: ${MAIL_PASSWORD}
       MAIL_ENCRYPTION: ${MAIL_ENCRYPTION:-tls}
-      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@example.com}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Envelope}
       # Cache and Session
       CACHE_DRIVER: ${CACHE_DRIVER:-redis}
@@ -135,7 +135,7 @@ services:
       APP_ENV: ${APP_ENV:-production}
       PORT: 3000
       BASE_URL: ${TENANT_BASE_URL}
-      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN}
+      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY}
       # API Configuration
       NUXT_API_BASE_SERVER: http://api:8000/api/v1
@@ -179,7 +179,7 @@ services:
       PORT: 3000
       BASE_URL: ${HQ_BASE_URL}
       BASE_DOMAIN: ${BASE_DOMAIN}
-      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN}
+      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY}
       # API Configuration
       NUXT_API_BASE_SERVER: http://api:8000/api/v1
