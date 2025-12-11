@@ -18,11 +18,12 @@ NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+INFRA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$INFRA_DIR"
 
-# Docker compose files
-DEV_COMPOSE="docker-compose.yml"
-PROD_COMPOSE="docker-compose.prod.yml"
+# Docker compose files (in parent infra directory)
+DEV_COMPOSE="$INFRA_DIR/docker-compose.yml"
+PROD_COMPOSE="$INFRA_DIR/docker-compose.prod.yml"
 
 # Current environment (dev or prod)
 ENV_MODE="dev"

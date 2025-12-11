@@ -141,7 +141,7 @@ services:
       APP_ENV: ${APP_ENV:-local}
       PORT: 3001
       BASE_URL: ${TENANT_BASE_URL:-http://localhost:3001}
-      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
+      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-localhost}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY:-}
       # Reverb Configuration
       REVERB_APP_KEY: ${REVERB_APP_KEY:-}
@@ -191,7 +191,7 @@ services:
       PORT: 3000
       BASE_URL: http://api:8000
       BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
-      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
+      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-localhost}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY:-}
     volumes:
       - ../hq:/app
