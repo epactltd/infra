@@ -164,16 +164,26 @@ module "tenant_provisioning" {
   }
 }
 
-# Secret for provisioner Lambda callback token
+# Auto-generate secure token for provisioner Lambda callback
+# This is stored in Secrets Manager and never exposed in tfvars or state
+resource "random_password" "provisioner_token" {
+  length           = 48
+  special          = false  # Avoid special chars for URL safety
+  override_special = ""
+}
+
 resource "aws_secretsmanager_secret" "provisioner_token" {
   name        = "${var.project_name}/${var.environment}/provisioner-token"
   description = "Token for tenant provisioner Lambda to authenticate with API"
+  
+  # Prevent accidental deletion
+  recovery_window_in_days = 7
 }
 
 resource "aws_secretsmanager_secret_version" "provisioner_token" {
   secret_id = aws_secretsmanager_secret.provisioner_token.id
   secret_string = jsonencode({
-    token = var.provisioner_callback_token
+    token = random_password.provisioner_token.result
   })
 }
 

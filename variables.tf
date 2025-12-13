@@ -315,12 +315,3 @@ variable "cicd_approval_sns_topic_arn" {
   default     = ""
 }
 
-# ============================================================================
-# Tenant Provisioning (EventBridge + Lambda)
-# ============================================================================
-
-variable "provisioner_callback_token" {
-  description = "Secret token for provisioner Lambda to authenticate with API"
-  type        = string
-  sensitive   = true
-}
