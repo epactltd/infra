@@ -227,12 +227,14 @@ resource "aws_iam_policy" "codepipeline" {
       {
         Effect = "Allow"
         Action = [
+          "ecs:DescribeClusters",
           "ecs:DescribeServices",
           "ecs:DescribeTaskDefinition",
           "ecs:DescribeTasks",
           "ecs:ListTasks",
           "ecs:RegisterTaskDefinition",
-          "ecs:UpdateService"
+          "ecs:UpdateService",
+          "ecs:TagResource"
         ]
         Resource = "*"
       },
@@ -244,9 +246,10 @@ resource "aws_iam_policy" "codepipeline" {
         ]
         Resource = "*"
         Condition = {
-          StringEqualsIfExists = {
+          StringLike = {
             "iam:PassedToService" = [
-              "ecs-tasks.amazonaws.com"
+              "ecs-tasks.amazonaws.com",
+              "ecs.amazonaws.com"
             ]
           }
         }
