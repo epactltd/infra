@@ -12,11 +12,13 @@ This guide walks you through deploying the Envelope application to AWS using Ter
 6. [Configure Terraform Variables](#6-configure-terraform-variables)
 7. [Deploy Infrastructure](#7-deploy-infrastructure)
 8. [Build and Push Docker Images](#8-build-and-push-docker-images)
-9. [Configure CI/CD Pipelines](#9-configure-cicd-pipelines)
-10. [DNS and Domain Setup](#10-dns-and-domain-setup)
-11. [Post-Deployment Validation](#11-post-deployment-validation)
-12. [First Release Deployment](#12-first-release-deployment)
-13. [Troubleshooting](#13-troubleshooting)
+9. [Run Database Migrations](#9-run-database-migrations)
+10. [Configure CI/CD Pipelines](#10-configure-cicd-pipelines)
+11. [DNS and Domain Setup](#11-dns-and-domain-setup)
+12. [Post-Deployment Validation](#12-post-deployment-validation)
+13. [First Release Deployment](#13-first-release-deployment)
+14. [Security Configuration](#14-security-configuration)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -30,6 +32,7 @@ This guide walks you through deploying the Envelope application to AWS using Ter
 | Terraform | >= 1.0 | Infrastructure as Code |
 | Docker | Latest | Building container images |
 | Git | Latest | Version control |
+| Session Manager Plugin | Latest | ECS execute-command support |
 
 ### Install Tools
 
@@ -37,11 +40,17 @@ This guide walks you through deploying the Envelope application to AWS using Ter
 # macOS (using Homebrew)
 brew install awscli terraform docker git
 
+# Install AWS Session Manager Plugin (required for ECS exec)
+curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac_arm64/sessionmanager-bundle.zip" -o "/tmp/sessionmanager-bundle.zip"
+cd /tmp && unzip -o sessionmanager-bundle.zip
+sudo /tmp/sessionmanager-bundle/install -i /usr/local/sessionmanagerplugin -b /usr/local/bin/session-manager-plugin
+
 # Verify installations
 aws --version
 terraform --version
 docker --version
 git --version
+session-manager-plugin --version
 ```
 
 ### Required Accounts
@@ -68,16 +77,21 @@ git --version
 ### 2.2 Configure AWS CLI
 
 ```bash
-# Configure default profile
-aws configure
+# Configure a named profile (recommended)
+aws configure --profile envelope
 # AWS Access Key ID: [from CSV]
 # AWS Secret Access Key: [from CSV]
 # Default region name: eu-west-2
 # Default output format: json
 
+# Set as default profile
+export AWS_PROFILE=envelope
+
 # Verify configuration
 aws sts get-caller-identity
 ```
+
+> **Important**: Ensure there are no trailing spaces or tabs in your `~/.aws/credentials` file, as this can cause authentication errors.
 
 ### 2.3 (Optional) Use AWS SSO
 
@@ -103,10 +117,10 @@ export AWS_PROFILE=your-profile
 mkdir -p ~/envelope && cd ~/envelope
 
 # Clone your repositories (adjust URLs)
-git clone git@github.com:epactlts/api.git api
-git clone git@github.com:epactlts/tenant.git tenant
-git clone git@github.com:epactlts/hq.git hq
-git clone git@github.com:epactlts/infra.git infra
+git clone git@github.com:epactltd/api.git api
+git clone git@github.com:epactltd/tenant.git tenant
+git clone git@github.com:epactltd/hq.git hq
+git clone git@github.com:epactltd/infra.git infra
 ```
 
 ### 3.2 Navigate to Infrastructure
@@ -177,8 +191,11 @@ echo "DynamoDB lock table: envelope-terraform-lock"
 Create a file `backend.hcl` (do not commit this file):
 
 ```bash
-cat > backend.hcl << 'EOF'
-bucket         = "envelope-terraform-state-ACCOUNT_ID"  # Replace with your bucket name
+# Get your account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+cat > backend.hcl << EOF
+bucket         = "envelope-terraform-state-${ACCOUNT_ID}"
 key            = "prod/terraform.tfstate"
 region         = "eu-west-2"
 dynamodb_table = "envelope-terraform-lock"
@@ -317,10 +334,10 @@ availability_zones = ["eu-west-2a", "eu-west-2b"]
 # =============================================================================
 # Application Settings
 # =============================================================================
-cors_allowed_origins     = "https://app.envelope.host,https://admin.envelope.host"
+cors_allowed_origins     = "https://*.envelope.host,https://admin.envelope.host"
 app_debug                = "false"
 octane_server            = "swoole"
-sanctum_stateful_domains = "app.envelope.host,admin.envelope.host"
+sanctum_stateful_domains = "*.envelope.host,admin.envelope.host"
 session_domain           = ".envelope.host"
 nuxt_public_api_protocol = "https"
 nuxt_public_api_port     = ""
@@ -332,6 +349,7 @@ app_key                  = "base64:YOUR_GENERATED_APP_KEY"  # From step 5.3
 # =============================================================================
 hq_host               = "admin.envelope.host"
 tenant_primary_domain = "envelope.host"
+api_host              = "api.envelope.host"
 
 # Reverb / WebSocket
 reverb_host        = "wss.envelope.host"
@@ -348,9 +366,9 @@ acm_certificate_arn = "arn:aws:acm:eu-west-2:ACCOUNT:certificate/XXX"  # From st
 # =============================================================================
 # Database
 # =============================================================================
-db_username             = "envelope_admin"
+db_username             = "appuser"
 db_name                 = "envelope"
-manage_db_password      = true   # Let RDS manage password
+manage_db_password      = true   # Let RDS manage password (recommended)
 backup_retention_period = 7
 rds_deletion_protection = true
 
@@ -366,10 +384,10 @@ enable_alb_deletion_protection = true
 # =============================================================================
 enable_cicd = true
 
-# GitHub repositories
-api_github_repository    = "your-org/envelope-api"
-tenant_github_repository = "your-org/envelope-tenant"
-hq_github_repository     = "your-org/envelope-hq"
+# GitHub repositories (format: org/repo)
+api_github_repository    = "epactltd/api"
+tenant_github_repository = "epactltd/tenant"
+hq_github_repository     = "epactltd/hq"
 github_branch            = "main"
 
 # Security
@@ -391,6 +409,8 @@ cicd_approval_sns_topic_arn  = "arn:aws:sns:eu-west-2:ACCOUNT:envelope-deploy-ap
 terraform init -backend-config=backend.hcl
 ```
 
+> If you get a backend configuration error, run `terraform init -backend-config=backend.hcl -reconfigure`
+
 ### 7.2 Plan Deployment
 
 ```bash
@@ -399,11 +419,11 @@ terraform plan -var-file=prod.tfvars -out=tfplan
 
 Review the plan carefully. It will create:
 - VPC with public, private, and data subnets
-- RDS MariaDB instance
-- ElastiCache Redis cluster
+- RDS MariaDB instance (with managed password)
+- ElastiCache Redis cluster (with TLS enabled)
 - ECR repositories
 - ECS cluster and services
-- Application Load Balancers
+- Application Load Balancers (public and internal)
 - S3 buckets
 - CI/CD pipelines (if enabled)
 
@@ -441,12 +461,10 @@ aws ecr get-login-password --region eu-west-2 | \
 ```bash
 cd ~/envelope/api
 
-# Build image (ARM64 for Fargate)
-docker build --platform linux/arm64 -t $ECR_REGISTRY/envelope-api:v0.1.0 .
+# Build image
+docker build -t $ECR_REGISTRY/envelope-api:latest .
 
 # Push to ECR
-docker push $ECR_REGISTRY/envelope-api:v0.1.0
-docker tag $ECR_REGISTRY/envelope-api:v0.1.0 $ECR_REGISTRY/envelope-api:latest
 docker push $ECR_REGISTRY/envelope-api:latest
 ```
 
@@ -455,9 +473,7 @@ docker push $ECR_REGISTRY/envelope-api:latest
 ```bash
 cd ~/envelope/tenant
 
-docker build --platform linux/arm64 -t $ECR_REGISTRY/envelope-tenant:v0.1.0 .
-docker push $ECR_REGISTRY/envelope-tenant:v0.1.0
-docker tag $ECR_REGISTRY/envelope-tenant:v0.1.0 $ECR_REGISTRY/envelope-tenant:latest
+docker build -t $ECR_REGISTRY/envelope-tenant:latest .
 docker push $ECR_REGISTRY/envelope-tenant:latest
 ```
 
@@ -466,9 +482,7 @@ docker push $ECR_REGISTRY/envelope-tenant:latest
 ```bash
 cd ~/envelope/hq
 
-docker build --platform linux/arm64 -t $ECR_REGISTRY/envelope-hq:v0.1.0 .
-docker push $ECR_REGISTRY/envelope-hq:v0.1.0
-docker tag $ECR_REGISTRY/envelope-hq:v0.1.0 $ECR_REGISTRY/envelope-hq:latest
+docker build -t $ECR_REGISTRY/envelope-hq:latest .
 docker push $ECR_REGISTRY/envelope-hq:latest
 ```
 
@@ -478,17 +492,83 @@ docker push $ECR_REGISTRY/envelope-hq:latest
 # Update services to use new images
 for service in api worker scheduler reverb tenant hq; do
   aws ecs update-service \
-    --cluster envelope-prod \
+    --cluster envelope-prod-cluster \
     --service envelope-prod-$service \
-    --force-new-deployment
+    --force-new-deployment \
+    --query 'service.serviceName' \
+    --output text
 done
 ```
 
 ---
 
-## 9. Configure CI/CD Pipelines
+## 9. Run Database Migrations
 
-### 9.1 Authorize GitHub Connections
+### 9.1 Run Initial Migration
+
+After pushing the API image and starting the service, run migrations using ECS run-task:
+
+```bash
+# Get the latest API task definition
+TASK_DEF=$(aws ecs describe-services \
+  --cluster envelope-prod-cluster \
+  --services envelope-prod-api \
+  --query 'services[0].taskDefinition' \
+  --output text)
+
+# Get private subnet and security group
+SUBNET=$(aws ec2 describe-subnets \
+  --filters "Name=tag:Name,Values=*envelope*private*" \
+  --query 'Subnets[0].SubnetId' \
+  --output text)
+
+SG=$(aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=*envelope*laravel*" \
+  --query 'SecurityGroups[0].GroupId' \
+  --output text)
+
+# Run migration task
+aws ecs run-task \
+  --cluster envelope-prod-cluster \
+  --task-definition $TASK_DEF \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+  --overrides '{
+    "containerOverrides": [{
+      "name": "api",
+      "command": ["php", "artisan", "migrate", "--force"]
+    }]
+  }' \
+  --query 'tasks[0].taskArn' \
+  --output text
+```
+
+### 9.2 Monitor Migration Task
+
+```bash
+# Replace with your task ARN
+TASK_ARN="arn:aws:ecs:eu-west-2:ACCOUNT:task/envelope-prod-cluster/TASK_ID"
+
+# Check task status
+aws ecs describe-tasks \
+  --cluster envelope-prod-cluster \
+  --tasks $TASK_ARN \
+  --query 'tasks[0].{Status:lastStatus,ExitCode:containers[0].exitCode}'
+
+# View migration logs
+TASK_ID=$(echo $TASK_ARN | cut -d'/' -f3)
+aws logs get-log-events \
+  --log-group-name /ecs/envelope-prod-api \
+  --log-stream-name "ecs/api/$TASK_ID" \
+  --query 'events[*].message' \
+  --output text
+```
+
+---
+
+## 10. Configure CI/CD Pipelines
+
+### 10.1 Authorize GitHub Connections
 
 Each repository needs a separate GitHub connection authorization:
 
@@ -503,7 +583,7 @@ Each repository needs a separate GitHub connection authorization:
    - Authorize access to your GitHub organization
    - Select the appropriate repository
 
-### 9.2 Verify Pipelines
+### 10.2 Verify Pipelines
 
 Go to **AWS Console** > **CodePipeline** and verify:
 
@@ -513,32 +593,34 @@ Go to **AWS Console** > **CodePipeline** and verify:
 
 ---
 
-## 10. DNS and Domain Setup
+## 11. DNS and Domain Setup
 
-### 10.1 Get ALB DNS Names
+### 11.1 Get ALB DNS Names
 
 ```bash
 # Get public ALB DNS name
 aws elbv2 describe-load-balancers \
-  --names envelope-prod-public \
+  --names envelope-prod-public-alb \
   --query 'LoadBalancers[0].DNSName' \
   --output text
 ```
 
-### 10.2 Configure DNS Records
+### 11.2 Configure DNS Records
 
 Add the following DNS records (in Cloudflare or Route53):
 
 | Type | Name | Value | Proxy |
 |------|------|-------|-------|
-| CNAME | `api` | `envelope-prod-public-XXX.eu-west-2.elb.amazonaws.com` | Yes (Cloudflare) |
-| CNAME | `admin` | `envelope-prod-public-XXX.eu-west-2.elb.amazonaws.com` | Yes |
-| CNAME | `wss` | `envelope-prod-public-XXX.eu-west-2.elb.amazonaws.com` | No* |
-| CNAME | `*` (wildcard) | `envelope-prod-public-XXX.eu-west-2.elb.amazonaws.com` | Yes |
+| CNAME | `api` | `envelope-prod-public-alb-XXX.eu-west-2.elb.amazonaws.com` | Yes (Cloudflare) |
+| CNAME | `admin` | `envelope-prod-public-alb-XXX.eu-west-2.elb.amazonaws.com` | Yes |
+| CNAME | `wss` | `envelope-prod-public-alb-XXX.eu-west-2.elb.amazonaws.com` | No* |
+| CNAME | `*` (wildcard) | `envelope-prod-public-alb-XXX.eu-west-2.elb.amazonaws.com` | Yes |
 
-*WebSocket connections should not be proxied if using Cloudflare (or use WebSocket support).
+*WebSocket connections should not be proxied if using Cloudflare (or enable WebSocket support).
 
-### 10.3 Cloudflare Configuration (if using)
+> **Important**: If you have existing specific subdomain records (e.g., `demo`), they will override the wildcard. Remove or update them to point to the new ALB.
+
+### 11.3 Cloudflare Configuration (if using)
 
 1. **SSL/TLS**: Set to "Full (strict)"
 2. **WebSockets**: Enable WebSockets under Network settings
@@ -546,57 +628,54 @@ Add the following DNS records (in Cloudflare or Route53):
 
 ---
 
-## 11. Post-Deployment Validation
+## 12. Post-Deployment Validation
 
-### 11.1 Check ECS Services
+### 12.1 Check ECS Services
 
 ```bash
 # List all services
-aws ecs list-services --cluster envelope-prod
+aws ecs list-services --cluster envelope-prod-cluster
 
 # Check service status
 for service in api worker scheduler reverb tenant hq; do
   echo "=== $service ==="
   aws ecs describe-services \
-    --cluster envelope-prod \
+    --cluster envelope-prod-cluster \
     --services envelope-prod-$service \
-    --query 'services[0].{status:status,running:runningCount,desired:desiredCount}'
+    --query 'services[0].{status:status,running:runningCount,desired:desiredCount}' \
+    --output table
 done
 ```
 
-### 11.2 Check Health Endpoints
+### 12.2 Check Health Endpoints
 
 ```bash
-# API health check
-curl -I https://api.envelope.host/up
+# API health check (should return HTML with "Application up")
+curl -s https://api.envelope.host/up | grep -o "Application up" && echo " ✓ API OK"
 
 # HQ health check
-curl -I https://admin.envelope.host/
+curl -sI https://admin.envelope.host/ | head -1
 
 # Tenant health check (replace with actual tenant subdomain)
-curl -I https://demo.envelope.host/
+curl -sI https://demo.envelope.host/ | head -1
 ```
 
-### 11.3 Check Database Connectivity
+### 12.3 Check Target Group Health
 
 ```bash
-# Get a task ARN
-TASK_ARN=$(aws ecs list-tasks \
-  --cluster envelope-prod \
-  --service-name envelope-prod-api \
-  --query 'taskArns[0]' \
-  --output text)
+# Get all target groups
+aws elbv2 describe-target-groups \
+  --query 'TargetGroups[?contains(TargetGroupName, `envelope`)].{Name:TargetGroupName,ARN:TargetGroupArn}' \
+  --output table
 
-# Run artisan command to check DB
-aws ecs execute-command \
-  --cluster envelope-prod \
-  --task $TASK_ARN \
-  --container api \
-  --interactive \
-  --command "php artisan migrate:status"
+# Check health of specific target group
+aws elbv2 describe-target-health \
+  --target-group-arn TARGET_GROUP_ARN \
+  --query 'TargetHealthDescriptions[*].{Target:Target.Id,Health:TargetHealth.State}' \
+  --output table
 ```
 
-### 11.4 Check Logs
+### 12.4 Check Logs
 
 ```bash
 # View API logs
@@ -608,11 +687,11 @@ aws logs tail /ecs/envelope-prod-worker --follow
 
 ---
 
-## 12. First Release Deployment
+## 13. First Release Deployment
 
 Now that everything is set up, create your first release.
 
-### 12.1 Create API Release
+### 13.1 Create API Release
 
 1. Go to your API repository on GitHub
 2. Click **Releases** > **Draft a new release**
@@ -620,7 +699,7 @@ Now that everything is set up, create your first release.
 4. Write release notes
 5. Click **Publish release**
 
-### 12.2 Monitor Pipeline
+### 13.2 Monitor Pipeline
 
 1. Go to **AWS Console** > **CodePipeline**
 2. Click `envelope-prod-api-pipeline`
@@ -628,13 +707,59 @@ Now that everything is set up, create your first release.
    - Source → Build → Approval → Migrate → Deploy
 4. When prompted, approve the deployment
 
-### 12.3 Repeat for Tenant and HQ
+### 13.3 Repeat for Tenant and HQ
 
 Create releases in Tenant and HQ repositories following the same process.
 
 ---
 
-## 13. Troubleshooting
+## 14. Security Configuration
+
+### 14.1 Architecture Overview
+
+The infrastructure follows these security principles:
+
+| Component | Access |
+|-----------|--------|
+| RDS Database | Private only (no public access) |
+| ElastiCache Redis | Private only (TLS enabled) |
+| API containers | Private subnets, SG-restricted |
+| HQ/Tenant → API | Internal ALB (private network) |
+| Public access | Through Public ALB only |
+
+### 14.2 IP Whitelisting for API
+
+To restrict `api.envelope.host` to specific client IPs (for integrations):
+
+**Option 1: Cloudflare WAF (Recommended)**
+
+1. Go to **Cloudflare Dashboard** > **Security** > **WAF** > **Custom Rules**
+2. Create a rule:
+   - **If**: `(http.host eq "api.envelope.host") and (not ip.src in {WHITELIST_IPS})`
+   - **Then**: Block
+
+**Option 2: Cloudflare Access**
+
+Use Cloudflare Access for more advanced authentication and access control.
+
+### 14.3 Verify Database Security
+
+```bash
+# Confirm RDS is not publicly accessible
+aws rds describe-db-instances \
+  --db-instance-identifier envelope-prod-db \
+  --query 'DBInstances[0].PubliclyAccessible'
+# Should return: false
+
+# Confirm security group only allows internal access
+aws rds describe-db-instances \
+  --db-instance-identifier envelope-prod-db \
+  --query 'DBInstances[0].VpcSecurityGroups[*].VpcSecurityGroupId'
+```
+
+---
+
+## 15. Troubleshooting
 
 ### Pipeline Fails at Source
 
@@ -654,16 +779,33 @@ Create releases in Tenant and HQ repositories following the same process.
 aws logs tail /codebuild/envelope-prod-api-build --follow
 ```
 
-### Pipeline Fails at Migrate
+### Redis Connection Errors
 
-**Problem**: Database connection or migration error
+**Problem**: `Class "Predis\Client" not found` or Redis connection refused
+
+**Solution**: The infrastructure uses phpredis (not predis) with TLS. Ensure your Laravel config uses:
+```php
+'client' => env('REDIS_CLIENT', 'phpredis'),
+```
+
+And for TLS connections, the host should be prefixed with `tls://` or use the `REDIS_SCHEME=tls` environment variable.
+
+### Database Connection Errors
+
+**Problem**: `Access denied` or `Connection refused`
 
 **Solution**:
-```bash
-# Check migration logs
-aws logs tail /codebuild/envelope-prod-migration --follow
+1. Verify `DB_HOST` does not include port (should be hostname only)
+2. Verify `DB_PORT` is set to `3306`
+3. Verify `DB_CONNECTION` is set to `mysql`
+4. For RDS managed passwords, ensure secret ARN includes `:password::` suffix to extract the password field
 
-# Verify RDS security group allows CodeBuild
+```bash
+# Check task definition environment
+aws ecs describe-task-definition \
+  --task-definition envelope-prod-api \
+  --query 'taskDefinition.containerDefinitions[0].environment[?starts_with(name, `DB_`)]' \
+  --output table
 ```
 
 ### ECS Tasks Keep Failing
@@ -673,9 +815,17 @@ aws logs tail /codebuild/envelope-prod-migration --follow
 **Solution**:
 ```bash
 # Check stopped task reason
+TASK=$(aws ecs list-tasks \
+  --cluster envelope-prod-cluster \
+  --service-name envelope-prod-api \
+  --desired-status STOPPED \
+  --query 'taskArns[0]' \
+  --output text)
+
 aws ecs describe-tasks \
-  --cluster envelope-prod \
-  --tasks $(aws ecs list-tasks --cluster envelope-prod --service-name envelope-prod-api --desired-status STOPPED --query 'taskArns[0]' --output text)
+  --cluster envelope-prod-cluster \
+  --tasks $TASK \
+  --query 'tasks[0].stoppedReason'
 
 # Check container logs
 aws logs tail /ecs/envelope-prod-api --since 1h
@@ -688,17 +838,24 @@ aws logs tail /ecs/envelope-prod-api --since 1h
 **Solution**:
 1. Verify health check paths:
    - API: `/up`
-   - HQ: `/`
-   - Tenant: `/`
+   - HQ: `/` (accepts 200 or 302)
+   - Tenant: `/` (accepts 200 or 302)
 2. Check security groups allow ALB → ECS traffic
-3. Verify container is listening on correct port
+3. Verify container is listening on correct port (8000 for API, 3000 for Nuxt)
+
+```bash
+# Update health check to accept redirects
+aws elbv2 modify-target-group \
+  --target-group-arn TARGET_GROUP_ARN \
+  --matcher HttpCode=200,302
+```
 
 ### Cannot Connect to Database
 
 **Problem**: RDS connection refused
 
 **Solution**:
-1. Verify security group rules
+1. Verify security group rules allow ECS tasks
 2. Check RDS is in the same VPC
 3. Verify credentials in Secrets Manager
 
@@ -715,15 +872,25 @@ terraform apply -var-file=prod.tfvars
 terraform output
 
 # ECS
-aws ecs list-services --cluster envelope-prod
-aws ecs update-service --cluster envelope-prod --service SERVICE --force-new-deployment
+aws ecs list-services --cluster envelope-prod-cluster
+aws ecs update-service --cluster envelope-prod-cluster --service SERVICE --force-new-deployment
+
+# Run one-off command
+aws ecs run-task --cluster envelope-prod-cluster --task-definition TASK_DEF \
+  --launch-type FARGATE --network-configuration "..." \
+  --overrides '{"containerOverrides":[{"name":"api","command":["php","artisan","COMMAND"]}]}'
 
 # Logs
 aws logs tail /ecs/envelope-prod-api --follow
 aws logs tail /codebuild/envelope-prod-api-build --follow
 
-# Execute command in container
-aws ecs execute-command --cluster envelope-prod --task TASK_ARN --container api --interactive --command "/bin/sh"
+# Execute command in container (requires Session Manager plugin)
+aws ecs execute-command \
+  --cluster envelope-prod-cluster \
+  --task TASK_ARN \
+  --container api \
+  --interactive \
+  --command "/bin/sh"
 ```
 
 ### Important URLs
@@ -755,3 +922,46 @@ aws ecs execute-command --cluster envelope-prod --task TASK_ARN --container api 
 | **Total** | **~$340-585/month** |
 
 *Costs vary based on usage and region.*
+
+---
+
+## Appendix: Configuration Notes
+
+### Laravel Configuration Requirements
+
+The API container requires these environment variables (automatically set by Terraform):
+
+| Variable | Description |
+|----------|-------------|
+| `DB_CONNECTION` | Must be `mysql` |
+| `DB_HOST` | RDS hostname (without port) |
+| `DB_PORT` | `3306` |
+| `REDIS_SCHEME` | `tls` (for ElastiCache with encryption) |
+
+### Redis with TLS
+
+ElastiCache is configured with transit encryption (TLS). The Laravel `config/database.php` must use:
+
+```php
+'redis' => [
+    'client' => env('REDIS_CLIENT', 'phpredis'),
+    'default' => [
+        'host' => env('REDIS_SCHEME') === 'tls' 
+            ? 'tls://' . env('REDIS_HOST') 
+            : env('REDIS_HOST'),
+        // ... other config
+        'context' => env('REDIS_SCHEME') === 'tls' ? [
+            'ssl' => ['verify_peer' => false, 'verify_peer_name' => false],
+        ] : [],
+    ],
+],
+```
+
+### RDS Managed Passwords
+
+When `manage_db_password = true`, RDS creates a secret in AWS Secrets Manager with JSON format:
+```json
+{"username": "appuser", "password": "actual-password"}
+```
+
+The ECS task definition extracts just the password using the ARN suffix `:password::`.
