@@ -238,6 +238,19 @@ resource "aws_iam_policy" "codepipeline" {
         ]
         Resource = "*"
       },
+      # ECR (for ECS deployments to validate images)
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories",
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ]
+        Resource = "*"
+      },
       # IAM PassRole (for ECS task execution)
       {
         Effect = "Allow"
