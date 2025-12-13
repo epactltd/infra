@@ -164,28 +164,30 @@ module "tenant_provisioning" {
   }
 }
 
-# Auto-generate secure token for provisioner Lambda callback
-# This is stored in Secrets Manager and never exposed in tfvars or state
-resource "random_password" "provisioner_token" {
-  length           = 48
-  special          = false  # Avoid special chars for URL safety
-  override_special = ""
-}
-
+# Provisioner callback token - stored in Secrets Manager
+# The secret value is generated OUTSIDE Terraform and set manually or via CLI
+# This ensures the token NEVER appears in Terraform state
 resource "aws_secretsmanager_secret" "provisioner_token" {
   name        = "${var.project_name}/${var.environment}/provisioner-token"
   description = "Token for tenant provisioner Lambda to authenticate with API"
   
   # Prevent accidental deletion
   recovery_window_in_days = 7
+
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-provisioner-token"
+    Environment = var.environment
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+  }
 }
 
-resource "aws_secretsmanager_secret_version" "provisioner_token" {
-  secret_id = aws_secretsmanager_secret.provisioner_token.id
-  secret_string = jsonencode({
-    token = random_password.provisioner_token.result
-  })
-}
+# Note: Secret value is set via AWS CLI after terraform apply:
+# aws secretsmanager put-secret-value \
+#   --secret-id envelope/prod/provisioner-token \
+#   --secret-string '{"token":"$(openssl rand -base64 48 | tr -d '/+=' | cut -c1-48)"}'
+#
+# Or use AWS Console to generate a random value
 
 # CI/CD Module - AWS CodePipeline + CodeBuild (Separate pipelines per repository)
 module "cicd" {
