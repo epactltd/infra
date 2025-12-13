@@ -180,6 +180,7 @@ resource "aws_ecs_task_definition" "api" {
         { name = "OCTANE_SERVER", value = var.octane_server },
         { name = "SANCTUM_STATEFUL_DOMAINS", value = var.sanctum_stateful_domains },
         { name = "SESSION_DOMAIN", value = var.session_domain },
+        { name = "TENANT_PRIMARY_DOMAIN", value = var.tenant_primary_domain },
         { name = "REVERB_APP_ID", value = var.reverb_app_id },
         { name = "REVERB_APP_KEY", value = var.reverb_app_key },
         { name = "REVERB_APP_SECRET", value = var.reverb_app_secret },
@@ -237,7 +238,8 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "REDIS_SCHEME", value = "tls" },
         { name = "CORS_ALLOWED_ORIGINS", value = var.cors_allowed_origins },
         { name = "SANCTUM_STATEFUL_DOMAINS", value = var.sanctum_stateful_domains },
-        { name = "SESSION_DOMAIN", value = var.session_domain }
+        { name = "SESSION_DOMAIN", value = var.session_domain },
+        { name = "TENANT_PRIMARY_DOMAIN", value = var.tenant_primary_domain }
       ]
       secrets = [
         { name = "DB_PASSWORD", valueFrom = "${var.db_password_arn}:password::" },
@@ -387,7 +389,8 @@ resource "aws_ecs_task_definition" "scheduler" {
         { name = "REDIS_PORT", value = tostring(var.redis_port) },
         { name = "REDIS_SCHEME", value = "tls" },
         { name = "SANCTUM_STATEFUL_DOMAINS", value = var.sanctum_stateful_domains },
-        { name = "SESSION_DOMAIN", value = var.session_domain }
+        { name = "SESSION_DOMAIN", value = var.session_domain },
+        { name = "TENANT_PRIMARY_DOMAIN", value = var.tenant_primary_domain }
       ]
       secrets = [
         { name = "DB_PASSWORD", valueFrom = "${var.db_password_arn}:password::" },
