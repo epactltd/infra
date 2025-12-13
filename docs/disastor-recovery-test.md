@@ -1,6 +1,6 @@
 # Disaster Recovery (DR) Test Plan
 
-This document outlines the process for exercising and validating the disaster recovery capabilities of the multi-tenant AWS infrastructure. Tests should be scheduled at least twice per year or after significant architectural changes.
+This document outlines the process for exercising and validating the disaster recovery capabilities of the Envelope multi-tenant AWS infrastructure. Tests should be scheduled at least twice per year or after significant architectural changes.
 
 ## 1. Objectives
 - Validate that Recovery Time Objectives (RTO) and Recovery Point Objectives (RPO) are achievable.
@@ -9,8 +9,18 @@ This document outlines the process for exercising and validating the disaster re
 - Identify gaps in automation, observability, or documentation.
 
 ## 2. Scope
-- **In-scope services**: VPC networking, ALB/ASG compute tier, RDS MySQL database, tenant S3 buckets, Lambda tenant automation, AWS Backup vaults, monitoring stack (SNS, CloudWatch), and critical IAM roles/policies.
-- **Out-of-scope**: Client applications outside of Terraform’s control, DNS cutover to alternate regions, and third-party integrations (unless explicitly included in the exercise plan).
+- **In-scope services**: 
+  - VPC networking (public, private, data subnets)
+  - Application Load Balancers (public and internal)
+  - ECS Fargate services (API, Worker, Scheduler, Reverb, Tenant, HQ)
+  - RDS MariaDB database (central + tenant databases)
+  - ElastiCache Redis cluster
+  - Tenant S3 buckets (created via EventBridge + Lambda)
+  - Lambda tenant provisioner
+  - AWS Backup vaults
+  - CI/CD pipelines (CodePipeline, CodeBuild)
+  - Monitoring stack (SNS, CloudWatch)
+- **Out-of-scope**: Client applications outside of Terraform's control, DNS cutover to alternate regions, Cloudflare configuration, and third-party integrations.
 
 ## 3. Pre-Test Checklist
 1. Obtain executive approval and notify stakeholders (application team, platform team, security, on-call).
@@ -22,22 +32,56 @@ This document outlines the process for exercising and validating the disaster re
 ## 4. Test Scenarios
 | Scenario | Description | Expected Outcome |
 |----------|-------------|------------------|
-| **Database Restore** | Simulate corruption by restoring RDS from a backup to a clean environment and switching application traffic | Restored DB passes integrity checks; app reconnects with minimal downtime |
-| **Tenant Bucket Recovery** | Restore a tenant’s S3 data to a staging bucket and validate object integrity | All critical objects restored; policies/tags preserved; documented merge steps |
-| **Compute Failover** | Terminate ASG instances and verify automatic recovery; optionally test blue/green deployment scripts | ASG rehydrates instances, ALB reports healthy targets |
-| **Control Plane Loss** | Simulate Terraform state loss and demonstrate recovery using remote backend snapshot | State recovered, no drift; documentation updated |
+| **Database Restore** | Simulate corruption by restoring RDS from a backup to a clean environment | Restored DB passes integrity checks; all tenant databases intact |
+| **Single Tenant Recovery** | Restore a specific tenant database from backup without affecting others | Tenant data restored; other tenants unaffected |
+| **Tenant Bucket Recovery** | Restore a tenant's S3 data to a staging bucket and validate object integrity | All critical objects restored; policies/tags preserved; documented merge steps |
+| **ECS Service Failover** | Stop all tasks for a service and verify automatic recovery | ECS relaunches tasks; ALB health checks pass; service recovers within RTO |
+| **Bad Deployment Rollback** | Deploy a broken image and roll back to previous task definition | Previous version restored; CI/CD pipeline can be re-triggered |
+| **Worker Queue Recovery** | Simulate worker failure; verify failed jobs are retried | Jobs reprocessed after worker restart; no data loss |
+| **Control Plane Loss** | Simulate Terraform state loss and demonstrate recovery using S3 backend snapshot | State recovered, no drift; documentation updated |
+| **Lambda Provisioner Failure** | Disable Lambda and create tenant; verify manual recovery | Tenant created without S3; manual bucket creation documented |
 | **Regional Failover (Optional)** | Deploy stack in secondary region using same Terraform modules | Secondary region passes smoke tests and is ready for DNS cutover |
 
 Select scenarios based on business priorities; at least two must be executed per exercise.
 
-## 5. Execution Steps (Example: Database Restore Scenario)
+## 5. Execution Steps
+
+### Example: Database Restore Scenario
 1. **Kick-off**: Start the test, assign command roles (incident lead, communications, technical leads).
-2. **Trigger Event**: Disable application write traffic (maintenance mode), note timestamps.
+2. **Trigger Event**: Put application in maintenance mode, note timestamps.
 3. **Restore**: Follow `docs/backup-restore-runbook.md` to restore the RDS instance to a new identifier.
 4. **Validation**: Run automated smoke tests and manual verification by the application team.
-5. **Cutover**: Update application configuration to use the restored instance (if part of the test).
+5. **Cutover**: Update ECS task definitions to use restored instance (if part of the test).
 6. **Monitoring**: Observe CloudWatch metrics, SNS alerts, and logs for anomalies.
 7. **Document**: Record times, issues, workarounds, and screenshots/log excerpts.
+
+### Example: ECS Service Failover Scenario
+1. **Kick-off**: Notify stakeholders, prepare monitoring dashboards.
+2. **Trigger Event**: Stop all tasks for `envelope-prod-api`:
+   ```bash
+   aws ecs update-service --cluster envelope-prod-cluster \
+     --service envelope-prod-api --desired-count 0
+   ```
+3. **Observe**: Monitor ALB health checks failing, CloudWatch alarms triggering.
+4. **Recovery**: Restore desired count:
+   ```bash
+   aws ecs update-service --cluster envelope-prod-cluster \
+     --service envelope-prod-api --desired-count 1
+   ```
+5. **Validation**: Verify health checks pass, API responds correctly.
+6. **Document**: Record recovery time, compare against RTO target.
+
+### Example: Bad Deployment Rollback
+1. **Trigger**: Deploy a known-broken image via CodePipeline (use test branch).
+2. **Observe**: Health checks fail, circuit breaker triggers rollback.
+3. **Manual Intervention**: If needed, force previous task definition:
+   ```bash
+   aws ecs update-service --cluster envelope-prod-cluster \
+     --service envelope-prod-api \
+     --task-definition envelope-prod-api:PREVIOUS_REVISION
+   ```
+4. **Validation**: Service recovers with previous version.
+5. **Document**: Record rollback procedure and time.
 
 Repeat similar step breakdowns for other selected scenarios.
 
@@ -65,11 +109,39 @@ Repeat similar step breakdowns for other selected scenarios.
 Adjust the matrix before each exercise based on availability.
 
 ## 9. Tooling & References
+
+### AWS Services
 - AWS Backup console & CLI (`aws backup ...`)
 - RDS console / `aws rds ...`
-- CloudWatch dashboards and alarms (see `modules/monitoring`)
-- Terraform state (S3 backend) and code repository
-- Runbooks: `docs/backup-restore-runbook.md`, `docs/deployment.md`
+- ECS console / `aws ecs ...`
+- CloudWatch dashboards and alarms
+- CodePipeline / CodeBuild for CI/CD
+
+### Key Commands
+```bash
+# Check ECS service status
+aws ecs describe-services --cluster envelope-prod-cluster \
+  --services envelope-prod-api envelope-prod-worker envelope-prod-tenant envelope-prod-hq
+
+# View failed jobs queue
+aws ecs run-task --cluster envelope-prod-cluster \
+  --task-definition envelope-prod-api --launch-type FARGATE \
+  --network-configuration "..." \
+  --overrides '{"containerOverrides":[{"name":"api","command":["php","artisan","queue:failed"]}]}'
+
+# Check RDS status
+aws rds describe-db-instances --db-instance-identifier envelope-prod-db
+
+# View recent CloudWatch logs
+aws logs tail /ecs/envelope-prod-api --since 1h
+aws logs tail /aws/lambda/envelope-prod-tenant-provisioner --since 1h
+```
+
+### Documentation
+- Runbooks: `docs/backup-restore-runbook.md`
+- Deployment: `docs/deployment-guide.md`
+- CI/CD: `docs/cicd-setup.md`
+- Terraform state: S3 bucket `envelope-terraform-state-ACCOUNT_ID`
 
 ## 10. Continuous Improvement
 - Track metrics from each DR test (duration, issues, automation coverage).
