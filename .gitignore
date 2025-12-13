@@ -6,4 +6,5 @@ crash.log
 *.tfvars
 modules/s3/scan_lambda.zip
 .DS_Store
-Thumbs.db
+Thumbs.db*.zip
+tfplan*
