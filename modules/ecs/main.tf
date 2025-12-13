@@ -272,7 +272,7 @@ resource "aws_ecs_task_definition" "tenant" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "ARM64"
+    cpu_architecture        = "X86_64"  # x86 for CodeBuild MEDIUM compatibility
   }
 
   container_definitions = jsonencode([
@@ -321,7 +321,7 @@ resource "aws_ecs_task_definition" "hq" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "ARM64"
+    cpu_architecture        = "X86_64"  # x86 for CodeBuild MEDIUM compatibility
   }
 
   container_definitions = jsonencode([
