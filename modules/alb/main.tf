@@ -75,7 +75,7 @@ resource "aws_lb_target_group" "reverb" {
     path                = "/"
     healthy_threshold   = 2
     unhealthy_threshold = 10
-    matcher             = "200,426" # 426 = Upgrade Required (expected for WS)
+    matcher             = "200,404,426" # 404 = Reverb returns this on /, 426 = Upgrade Required (expected for WS)
   }
 
   # Sticky sessions for WebSocket connections
