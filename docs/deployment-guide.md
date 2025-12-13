@@ -859,6 +859,66 @@ aws elbv2 modify-target-group \
 2. Check RDS is in the same VPC
 3. Verify credentials in Secrets Manager
 
+### Tenant Provisioning Stuck
+
+**Problem**: Tenant shows "pending" status for Database/Migration/Seeds
+
+**Solution**:
+1. Check if worker is running the latest task definition
+2. Check failed jobs queue
+3. Verify `QUEUE_CONNECTION=redis` is set
+
+```bash
+# Check failed jobs
+aws ecs run-task --cluster envelope-prod-cluster \
+  --task-definition TASK_DEF --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={...}" \
+  --overrides '{"containerOverrides":[{"name":"api","command":["php","artisan","queue:failed"]}]}'
+
+# Force update worker
+aws ecs update-service --cluster envelope-prod-cluster \
+  --service envelope-prod-worker --force-new-deployment
+```
+
+### S3 Bucket Creation Fails
+
+**Problem**: Bucket flag shows error or stays pending
+
+**Solution**:
+1. Check Lambda logs for errors
+2. Verify `AWS_EVENTBRIDGE_BUS` environment variable is set
+3. Check EventBridge rule is properly configured
+
+```bash
+# Check Lambda logs
+aws logs tail /aws/lambda/envelope-prod-tenant-provisioner --since 30m
+
+# Verify EventBridge bus
+aws events describe-event-bus --name envelope-prod-app-events
+
+# Check rules
+aws events list-rules --event-bus-name envelope-prod-app-events
+```
+
+### EventBridge Bus Name Not Configured
+
+**Problem**: `RuntimeException: EventBridge bus name not configured`
+
+**Solution**: 
+1. Verify `AWS_EVENTBRIDGE_BUS` is in the worker task definition
+2. Force redeploy worker service after Terraform apply
+
+```bash
+# Check worker env vars
+aws ecs describe-task-definition \
+  --task-definition envelope-prod-worker \
+  --query 'taskDefinition.containerDefinitions[0].environment[?name==`AWS_EVENTBRIDGE_BUS`]'
+
+# Force update
+aws ecs update-service --cluster envelope-prod-cluster \
+  --service envelope-prod-worker --force-new-deployment
+```
+
 ---
 
 ## Quick Reference
@@ -929,7 +989,7 @@ aws ecs execute-command \
 
 ### Laravel Configuration Requirements
 
-The API container requires these environment variables (automatically set by Terraform):
+The API/Worker/Scheduler containers require these environment variables (automatically set by Terraform):
 
 | Variable | Description |
 |----------|-------------|
@@ -937,6 +997,10 @@ The API container requires these environment variables (automatically set by Ter
 | `DB_HOST` | RDS hostname (without port) |
 | `DB_PORT` | `3306` |
 | `REDIS_SCHEME` | `tls` (for ElastiCache with encryption) |
+| `QUEUE_CONNECTION` | `redis` (uses ElastiCache) |
+| `AWS_EVENTBRIDGE_BUS` | EventBridge bus name for tenant provisioning |
+| `TENANT_PRIMARY_DOMAIN` | Primary domain for tenant validation (e.g., `envelope.host`) |
+| `SKIP_MIGRATIONS` | `true` (prevents migrations on container startup) |
 
 ### Redis with TLS
 
@@ -965,3 +1029,216 @@ When `manage_db_password = true`, RDS creates a secret in AWS Secrets Manager wi
 ```
 
 The ECS task definition extracts just the password using the ARN suffix `:password::`.
+
+---
+
+## Appendix: Tenant Provisioning Architecture
+
+When a new tenant is created in HQ, the following automated provisioning flow occurs:
+
+### Flow Diagram
+
+```
+Create Tenant (HQ)
+       │
+       ▼
+┌──────────────────┐
+│  Worker Queue    │
+│                  │
+│ 1. CreateDatabase│ ──► Database created (or skipped if exists)
+│ 2. Migrate       │ ──► Tables created
+│ 3. Seed          │ ──► Initial data populated
+│ 4. PublishEvent  │ ──► EventBridge event sent
+│ 5. Finalize      │ ──► Status updated
+└──────────────────┘
+       │
+       ▼ (EventBridge)
+┌──────────────────┐
+│  Lambda          │
+│  Provisioner     │
+│                  │
+│ - Create S3      │
+│ - Configure      │
+│ - Callback API   │
+└──────────────────┘
+       │
+       ▼
+┌──────────────────┐
+│  API Callback    │
+│                  │
+│ - Update tenant  │
+│   S3 configs     │
+│ - Update bucket  │
+│   flag to success│
+└──────────────────┘
+```
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `CreateDatabaseIfNotExists` | Idempotent database creation (safe for retries) |
+| `PublishTenantCreatedEvent` | Publishes event to EventBridge |
+| `envelope-prod-tenant-provisioner` | Lambda that creates S3 buckets securely |
+| `/api/internal/tenants/{id}/provisioning` | Callback endpoint for Lambda |
+| `provisioner-token` secret | Authentication token for Lambda callbacks |
+
+### Environment Variables
+
+All Laravel services (API, Worker, Scheduler) require:
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_EVENTBRIDGE_BUS` | Name of the EventBridge bus (`envelope-prod-app-events`) |
+| `PROVISIONER_CALLBACK_TOKEN` | Token for internal API callbacks (from Secrets Manager) |
+
+### Idempotent Operations
+
+The provisioning jobs are designed to be **retry-safe**:
+
+1. **CreateDatabaseIfNotExists** - Catches `TenantDatabaseAlreadyExistsException` and continues
+2. **UserSeeder** - Uses `updateOrCreate()` instead of direct inserts
+3. **Lambda** - Checks if bucket exists before creating
+
+### Troubleshooting Provisioning
+
+```bash
+# Check failed jobs
+aws ecs run-task ... --overrides '{"containerOverrides":[{"name":"api","command":["php","artisan","queue:failed"]}]}'
+
+# Check Lambda logs
+aws logs tail /aws/lambda/envelope-prod-tenant-provisioner --follow
+
+# Check EventBridge events
+aws events describe-event-bus --name envelope-prod-app-events
+
+# Retry failed jobs
+aws ecs run-task ... --overrides '{"containerOverrides":[{"name":"api","command":["php","artisan","queue:retry","all"]}]}'
+```
+
+---
+
+## Appendix: GitHub Actions Deployment
+
+### Automated Deployments on Release
+
+Each repository can trigger its CodePipeline automatically when a GitHub release is created.
+
+### Setup GitHub Actions Workflow
+
+Create `.github/workflows/deploy.yml` in each repository:
+
+```yaml
+name: Deploy to Production
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  trigger-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::ACCOUNT_ID:role/github-actions-role
+          aws-region: eu-west-2
+
+      - name: Trigger CodePipeline
+        run: |
+          aws codepipeline start-pipeline-execution \
+            --name envelope-prod-api-pipeline
+```
+
+### Create IAM Role for GitHub Actions
+
+```bash
+# Create OIDC provider (one-time)
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+
+# Create role with trust policy
+cat > trust-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+      },
+      "StringLike": {
+        "token.actions.githubusercontent.com:sub": "repo:epactltd/*:*"
+      }
+    }
+  }]
+}
+EOF
+
+aws iam create-role \
+  --role-name github-actions-role \
+  --assume-role-policy-document file://trust-policy.json
+
+# Attach policy for CodePipeline
+aws iam put-role-policy \
+  --role-name github-actions-role \
+  --policy-name codepipeline-start \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": "codepipeline:StartPipelineExecution",
+      "Resource": "arn:aws:codepipeline:eu-west-2:ACCOUNT_ID:envelope-prod-*"
+    }]
+  }'
+```
+
+---
+
+## Appendix: Build Optimizations
+
+### Docker Build Performance
+
+The API Dockerfile uses several optimizations for faster builds:
+
+1. **Multi-stage build** - Separates build dependencies from runtime
+2. **BuildKit cache mounts** - Caches composer and apk downloads
+3. **Layer caching** - Uses `--cache-from` to reuse previous layers
+
+### buildspec.yml Configuration
+
+```yaml
+phases:
+  pre_build:
+    commands:
+      # Pull previous image for cache
+      - docker pull $ECR_REGISTRY/$REPO_NAME:latest || true
+
+  build:
+    commands:
+      # Enable BuildKit with cache
+      - export DOCKER_BUILDKIT=1
+      - docker build --cache-from $ECR_REGISTRY/$REPO_NAME:latest \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          -t $IMAGE_URI -f Dockerfile .
+```
+
+### CodeBuild Compute Types
+
+| Service | Compute Type | RAM | Notes |
+|---------|--------------|-----|-------|
+| API | BUILD_GENERAL1_MEDIUM | 7 GB | PHP compilation needs memory |
+| Tenant | BUILD_GENERAL1_MEDIUM | 7 GB | Nuxt build needs memory |
+| HQ | BUILD_GENERAL1_MEDIUM | 7 GB | Nuxt build needs memory |
+| Migration | BUILD_GENERAL1_SMALL | 3 GB | Lightweight ECS task runner |
