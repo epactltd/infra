@@ -43,7 +43,8 @@ def call_api(tenant_id: str, action: str, data: dict) -> bool:
         print(f"Warning: API_CALLBACK_URL not configured, skipping callback")
         return False
     
-    url = f"{API_CALLBACK_URL}/api/internal/tenants/{tenant_id}/provisioning"
+    # API_CALLBACK_URL already includes /api, so don't duplicate it
+    url = f"{API_CALLBACK_URL}/internal/tenants/{tenant_id}/provisioning"
     token = get_api_token()
     
     payload = json.dumps({
