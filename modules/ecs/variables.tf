@@ -160,8 +160,18 @@ variable "api_public_tg_arn" {
   type = string
 }
 
-variable "tenant_bucket_provisioner_policy_arn" {
-  description = "IAM policy ARN that allows the HQ app to provision per-tenant buckets"
+variable "eventbridge_publisher_policy_arn" {
+  description = "IAM policy ARN that allows publishing events to EventBridge"
+  type        = string
+}
+
+variable "eventbridge_bus_name" {
+  description = "Name of the EventBridge event bus for tenant provisioning events"
+  type        = string
+}
+
+variable "provisioner_token_secret_arn" {
+  description = "Secrets Manager ARN for provisioner callback token"
   type        = string
 }
 

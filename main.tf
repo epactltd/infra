@@ -127,9 +127,11 @@ module "ecs" {
   reverb_app_secret     = var.reverb_app_secret
   reverb_public_host    = var.reverb_public_host
 
-  # IAM policies
-  tenant_bucket_provisioner_policy_arn = module.s3.tenant_bucket_provisioner_policy_arn
+  # IAM policies - EventBridge for provisioning, S3 for data access only
+  eventbridge_publisher_policy_arn = module.tenant_provisioning.eventbridge_publisher_policy_arn
+  eventbridge_bus_name             = module.tenant_provisioning.event_bus_name
   tenant_bucket_data_access_policy_arn = module.s3.tenant_bucket_data_access_policy_arn
+  provisioner_token_secret_arn     = aws_secretsmanager_secret.provisioner_token.arn
 }
 
 module "s3" {
@@ -137,6 +139,42 @@ module "s3" {
 
   project_name = var.project_name
   environment  = var.environment
+}
+
+# Tenant Provisioning Module - EventBridge + Lambda for S3 bucket provisioning
+module "tenant_provisioning" {
+  source = "./modules/tenant-provisioning"
+
+  project_name = var.project_name
+  environment  = var.environment
+  region       = var.region
+
+  # API callback configuration
+  api_callback_url        = "https://${var.api_host}/api"
+  api_callback_secret_arn = aws_secretsmanager_secret.provisioner_token.arn
+
+  # Use same tenant bucket prefix as S3 module
+  tenant_bucket_prefix = "${var.project_name}-tenant-"
+
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-tenant-provisioning"
+    Environment = var.environment
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+  }
+}
+
+# Secret for provisioner Lambda callback token
+resource "aws_secretsmanager_secret" "provisioner_token" {
+  name        = "${var.project_name}/${var.environment}/provisioner-token"
+  description = "Token for tenant provisioner Lambda to authenticate with API"
+}
+
+resource "aws_secretsmanager_secret_version" "provisioner_token" {
+  secret_id = aws_secretsmanager_secret.provisioner_token.id
+  secret_string = jsonencode({
+    token = var.provisioner_callback_token
+  })
 }
 
 # CI/CD Module - AWS CodePipeline + CodeBuild (Separate pipelines per repository)

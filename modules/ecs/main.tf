@@ -60,7 +60,8 @@ resource "aws_iam_policy" "secrets_access" {
         ]
         Resource = [
           var.db_password_arn,
-          var.redis_auth_token_arn
+          var.redis_auth_token_arn,
+          var.provisioner_token_secret_arn
         ]
       }
     ]
@@ -94,9 +95,9 @@ resource "aws_iam_role_policy_attachment" "task_role_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy_attachment" "task_role_tenant_buckets" {
+resource "aws_iam_role_policy_attachment" "task_role_eventbridge" {
   role       = aws_iam_role.task_role.name
-  policy_arn = var.tenant_bucket_provisioner_policy_arn
+  policy_arn = var.eventbridge_publisher_policy_arn
 }
 
 resource "aws_iam_role_policy_attachment" "task_role_s3_data" {
@@ -191,7 +192,8 @@ resource "aws_ecs_task_definition" "api" {
       ]
       secrets = [
         { name = "DB_PASSWORD", valueFrom = "${var.db_password_arn}:password::" },
-        { name = "REDIS_PASSWORD", valueFrom = var.redis_auth_token_arn }
+        { name = "REDIS_PASSWORD", valueFrom = var.redis_auth_token_arn },
+        { name = "PROVISIONER_CALLBACK_TOKEN", valueFrom = "${var.provisioner_token_secret_arn}:token::" }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -239,6 +241,7 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "REDIS_PORT", value = tostring(var.redis_port) },
         { name = "REDIS_SCHEME", value = "tls" },
         { name = "QUEUE_CONNECTION", value = "redis" },
+        { name = "AWS_EVENTBRIDGE_BUS", value = var.eventbridge_bus_name },
         { name = "CORS_ALLOWED_ORIGINS", value = var.cors_allowed_origins },
         { name = "SANCTUM_STATEFUL_DOMAINS", value = var.sanctum_stateful_domains },
         { name = "SESSION_DOMAIN", value = var.session_domain },
