@@ -164,9 +164,9 @@ resource "aws_codebuild_project" "tenant" {
   }
 
   environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/amazonlinux2-aarch64-standard:3.0"
-    type                        = "ARM_CONTAINER"
+    compute_type                = "BUILD_GENERAL1_MEDIUM"
+    image                       = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+    type                        = "LINUX_CONTAINER"
     privileged_mode             = true
     image_pull_credentials_type = "CODEBUILD"
 
@@ -219,9 +219,9 @@ resource "aws_codebuild_project" "hq" {
   }
 
   environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/amazonlinux2-aarch64-standard:3.0"
-    type                        = "ARM_CONTAINER"
+    compute_type                = "BUILD_GENERAL1_MEDIUM"
+    image                       = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+    type                        = "LINUX_CONTAINER"
     privileged_mode             = true
     image_pull_credentials_type = "CODEBUILD"
 
@@ -440,7 +440,7 @@ resource "aws_codepipeline" "api" {
       owner           = "AWS"
       provider        = "CodeBuild"
       version         = "1"
-      input_artifacts = ["build_output"]
+      input_artifacts = ["source_output"]
       run_order       = 1
 
       configuration = {
@@ -465,7 +465,7 @@ resource "aws_codepipeline" "api" {
       configuration = {
         ClusterName = var.ecs_cluster_name
         ServiceName = var.api_service_name
-        FileName    = "imagedefinitions.json"
+        FileName    = "imagedefinitions-api.json"
       }
     }
 
@@ -481,7 +481,7 @@ resource "aws_codepipeline" "api" {
       configuration = {
         ClusterName = var.ecs_cluster_name
         ServiceName = var.worker_service_name
-        FileName    = "imagedefinitions.json"
+        FileName    = "imagedefinitions-worker.json"
       }
     }
 
@@ -497,7 +497,7 @@ resource "aws_codepipeline" "api" {
       configuration = {
         ClusterName = var.ecs_cluster_name
         ServiceName = var.scheduler_service_name
-        FileName    = "imagedefinitions.json"
+        FileName    = "imagedefinitions-scheduler.json"
       }
     }
 
@@ -513,7 +513,7 @@ resource "aws_codepipeline" "api" {
       configuration = {
         ClusterName = var.ecs_cluster_name
         ServiceName = var.reverb_service_name
-        FileName    = "imagedefinitions.json"
+        FileName    = "imagedefinitions-reverb.json"
       }
     }
   }

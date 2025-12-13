@@ -119,6 +119,40 @@ resource "aws_iam_policy" "codebuild" {
           aws_codestarconnections_connection.tenant.arn,
           aws_codestarconnections_connection.hq.arn
         ]
+      },
+      # ECS (for running migrations via ECS RunTask)
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeServices",
+          "ecs:DescribeTasks",
+          "ecs:DescribeTaskDefinition",
+          "ecs:RunTask"
+        ]
+        Resource = "*"
+      },
+      # IAM PassRole (for ECS task execution during migrations)
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole"
+        ]
+        Resource = "*"
+        Condition = {
+          StringLike = {
+            "iam:PassedToService" = "ecs-tasks.amazonaws.com"
+          }
+        }
+      },
+      # CloudWatch Logs (for viewing ECS task logs)
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents",
+          "logs:StartLiveTail"
+        ]
+        Resource = "arn:aws:logs:${var.region}:${var.aws_account_id}:log-group:/ecs/*"
       }
     ]
   })
