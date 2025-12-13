@@ -1,14 +1,50 @@
 # Docker Compose for Production Environment
 # Usage: docker compose -f docker-compose.prod.yml up -d
-# This configuration:
-# - Uses pre-built production images (no volumes)
-# - Optimized for production performance
-# - No watch mode or development tools
-# - Production-ready environment variables
+#
+# SECURITY NOTES:
+# - MySQL and Redis are on a private internal network (not exposed to public)
+# - API is internal-only, accessed via frontend proxy
+# - Only HQ and Tenant frontends are exposed publicly
+# - WebSocket (Reverb) is exposed for real-time features
+# - In production, use a reverse proxy (Nginx/Traefik) in front of this stack
+#
+# NETWORK ARCHITECTURE:
+# ┌─────────────────────────────────────────────────────────────────┐
+# │                         PUBLIC                                   │
+# │                           │                                      │
+# │                    ┌──────┴──────┐                              │
+# │                    │ Load Balancer│ (Nginx/Traefik - optional)  │
+# │                    └──────┬──────┘                              │
+# │              ┌────────────┼────────────┐                        │
+# │              ▼            ▼            ▼                        │
+# │         ┌────────┐  ┌────────┐  ┌──────────┐                   │
+# │         │   HQ   │  │ Tenant │  │  Reverb  │ ◄─ WebSocket      │
+# │         │ :3000  │  │ :3001  │  │  :8080   │                   │
+# │         └────┬───┘  └────┬───┘  └────┬─────┘                   │
+# │              │           │           │                          │
+# │              └─────┬─────┴───────────┘                          │
+# │                    │  envelope_frontend (bridge)                │
+# ├────────────────────┼────────────────────────────────────────────┤
+# │                    ▼                                            │
+# │              ┌──────────┐  ┌──────────┐                        │
+# │              │   API    │  │  Worker  │                        │
+# │              │  :8000   │  │  (queue) │                        │
+# │              └────┬─────┘  └────┬─────┘                        │
+# │                   │             │                               │
+# │                   └──────┬──────┘                               │
+# │                          │  envelope_backend (internal)         │
+# ├──────────────────────────┼──────────────────────────────────────┤
+# │                          ▼                                      │
+# │              ┌──────────┐  ┌──────────┐                        │
+# │              │  MySQL   │  │  Redis   │                        │
+# │              │  :3306   │  │  :6379   │                        │
+# │              └──────────┘  └──────────┘                        │
+# │                    envelope_data (internal)                     │
+# └─────────────────────────────────────────────────────────────────┘
 
 services:
   # -------------------------------------------------------------------------
-  # Backend Services (Laravel)
+  # Backend Services (Laravel) - INTERNAL ONLY
   # -------------------------------------------------------------------------
   api:
     build:
@@ -20,21 +56,21 @@ services:
     pull_policy: build
     container_name: envelope_api_prod
     restart: always
-    ports:
-      - "${OCTANE_HOST_PORT:-8008}:${OCTANE_PORT:-8000}" # Octane
-      - "${REVERB_HOST_PORT:-8080}:${REVERB_PORT:-8080}" # Reverb WebSocket
+    # NO PORTS EXPOSED - accessed internally via frontend proxy
+    expose:
+      - "${OCTANE_PORT:-8000}"
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_DEBUG: ${APP_DEBUG:-false}
       APP_NAME: ${APP_NAME:-Envelope}
-      APP_URL: ${APP_URL:-https://api.example.com}
-      DB_HOST: ${DB_HOST:-mysql}
-      DB_PORT: ${DB_PORT:-3306}
+      APP_URL: ${APP_URL:-https://api.envelope.host}
+      DB_HOST: mysql
+      DB_PORT: 3306
       DB_DATABASE: ${DB_DATABASE}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       OCTANE_SERVER: ${OCTANE_SERVER:-swoole}
       OCTANE_PORT: ${OCTANE_PORT:-8000}
@@ -52,7 +88,7 @@ services:
       MAIL_USERNAME: ${MAIL_USERNAME}
       MAIL_PASSWORD: ${MAIL_PASSWORD}
       MAIL_ENCRYPTION: ${MAIL_ENCRYPTION:-tls}
-      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@example.com}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@envelope.host}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Envelope}
       # Cache and Session
       CACHE_DRIVER: ${CACHE_DRIVER:-redis}
@@ -62,9 +98,10 @@ services:
       mysql:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     networks:
-      - envelope_net
+      - envelope_backend
+      - envelope_data
     healthcheck:
       test: [ "CMD", "php", "-r", "echo 'OK';" ]
       interval: 30s
@@ -89,16 +126,18 @@ services:
     container_name: envelope_worker_prod
     restart: always
     command: [ "/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/worker.conf", "-n" ]
+    # NO PORTS - internal worker process
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_DEBUG: ${APP_DEBUG:-false}
-      DB_HOST: ${DB_HOST:-mysql}
-      DB_PORT: ${DB_PORT:-3306}
+      APP_NAME: ${APP_NAME:-Envelope}
+      DB_HOST: mysql
+      DB_PORT: 3306
       DB_DATABASE: ${DB_DATABASE}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       CACHE_DRIVER: ${CACHE_DRIVER:-redis}
       SESSION_DRIVER: ${SESSION_DRIVER:-redis}
@@ -107,9 +146,10 @@ services:
       mysql:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     networks:
-      - envelope_net
+      - envelope_backend
+      - envelope_data
     deploy:
       resources:
         limits:
@@ -117,8 +157,56 @@ services:
         reservations:
           memory: 256M
 
+  # WebSocket server - needs to be accessible for real-time features
+  # In production, this should be behind a reverse proxy with WSS
+  reverb:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+      args:
+        - APP_ENV=production
+    image: envelope-api:prod
+    pull_policy: build
+    container_name: envelope_reverb_prod
+    restart: always
+    command: [ "php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=${REVERB_PORT:-8080}" ]
+    ports:
+      # WebSocket port - in production, put behind reverse proxy with SSL
+      - "${REVERB_HOST_PORT:-8080}:${REVERB_PORT:-8080}"
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_NAME: ${APP_NAME:-Envelope}
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REVERB_HOST: 0.0.0.0
+      REVERB_PORT: ${REVERB_PORT:-8080}
+      REVERB_APP_KEY: ${REVERB_APP_KEY}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET}
+      REVERB_APP_ID: ${REVERB_APP_ID}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - envelope_frontend
+      - envelope_data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
   # -------------------------------------------------------------------------
-  # Frontend Services (Nuxt) - Production Builds
+  # Frontend Services (Nuxt) - PUBLIC FACING
   # -------------------------------------------------------------------------
   tenant:
     build:
@@ -134,19 +222,21 @@ services:
       NODE_ENV: production
       APP_ENV: ${APP_ENV:-production}
       PORT: 3000
-      BASE_URL: ${TENANT_BASE_URL}
+      # BASE_URL is used by the API proxy - points to internal API
+      BASE_URL: http://api:${OCTANE_PORT:-8000}
       TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY}
-      # Reverb Configuration
+      # Reverb Configuration - public WebSocket URL
       REVERB_APP_KEY: ${REVERB_APP_KEY}
-      REVERB_HOST: ${REVERB_HOST}
-      REVERB_PORT: ${REVERB_PORT:-8080}
+      REVERB_HOST: ${REVERB_PUBLIC_HOST:-localhost}
+      REVERB_PORT: ${REVERB_HOST_PORT:-8080}
       REVERB_CLUSTER: ${REVERB_CLUSTER}
     depends_on:
       api:
         condition: service_healthy
     networks:
-      - envelope_net
+      - envelope_frontend
+      - envelope_backend
     healthcheck:
       test: [ "CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" ]
       interval: 30s
@@ -174,7 +264,8 @@ services:
       NODE_ENV: production
       APP_ENV: ${APP_ENV:-production}
       PORT: 3000
-      BASE_URL: ${HQ_BASE_URL}
+      # BASE_URL is used by the API proxy - points to internal API
+      BASE_URL: http://api:${OCTANE_PORT:-8000}
       BASE_DOMAIN: ${BASE_DOMAIN}
       TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY}
@@ -182,7 +273,8 @@ services:
       api:
         condition: service_healthy
     networks:
-      - envelope_net
+      - envelope_frontend
+      - envelope_backend
     healthcheck:
       test: [ "CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" ]
       interval: 30s
@@ -197,15 +289,14 @@ services:
           memory: 256M
 
   # -------------------------------------------------------------------------
-  # Infrastructure Services
+  # Infrastructure Services - PRIVATE INTERNAL NETWORK
   # -------------------------------------------------------------------------
   mysql:
     image: mariadb:10.11
     pull_policy: if_not_present
     container_name: envelope_mysql_prod
     restart: always
-    ports:
-      - "${MYSQL_HOST_PORT:-3307}:3306"
+    # NO PORTS EXPOSED - internal only
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${DB_DATABASE}
@@ -214,7 +305,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
-      - envelope_net
+      - envelope_data
     healthcheck:
       test: [ "CMD", "healthcheck.sh", "--connect", "--innodb_initialized" ]
       interval: 10s
@@ -233,15 +324,14 @@ services:
     pull_policy: if_not_present
     container_name: envelope_redis_prod
     restart: always
-    ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
+    # NO PORTS EXPOSED - internal only
     command: redis-server --appendonly yes ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
-      - envelope_net
+      - envelope_data
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD", "redis-cli", "${REDIS_PASSWORD:+--pass $REDIS_PASSWORD}", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -252,10 +342,28 @@ services:
         reservations:
           memory: 256M
 
+# -------------------------------------------------------------------------
+# Networks - Layered security architecture
+# -------------------------------------------------------------------------
 networks:
-  envelope_net:
+  # Public-facing network for frontend services
+  envelope_frontend:
     driver: bridge
+    
+  # Internal network for API <-> Frontend communication
+  envelope_backend:
+    driver: bridge
+    internal: false  # Frontends need to reach API
+    
+  # Isolated network for data services (MySQL, Redis)
+  # Only accessible by API and Worker
+  envelope_data:
+    driver: bridge
+    internal: true  # Completely isolated from external access
 
+# -------------------------------------------------------------------------
+# Persistent Volumes
+# -------------------------------------------------------------------------
 volumes:
   mysql_data:
     driver: local

@@ -90,6 +90,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: ${APP_DEBUG:-true}
+      APP_NAME: ${APP_NAME:-Envelope}
       DB_HOST: mysql
       DB_PORT: 3306
       DB_DATABASE: ${DB_DATABASE:-envelope}
@@ -139,9 +140,9 @@ services:
     environment:
       NODE_ENV: development
       APP_ENV: ${APP_ENV:-local}
-      PORT: 3001
-      BASE_URL: ${TENANT_BASE_URL:-http://localhost:3001}
-      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
+      PORT: 3000
+      BASE_URL: http://api:8000
+      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-localhost}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY:-}
       # Reverb Configuration
       REVERB_APP_KEY: ${REVERB_APP_KEY:-}
@@ -191,7 +192,7 @@ services:
       PORT: 3000
       BASE_URL: http://api:8000
       BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
-      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-envelope.host}
+      TENANT_PRIMARY_DOMAIN: ${TENANT_PRIMARY_DOMAIN:-localhost}
       RECAPTCHA_V2_SITEKEY: ${RECAPTCHA_V2_SITEKEY:-}
     volumes:
       - ../hq:/app

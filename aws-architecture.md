@@ -1,142 +1,287 @@
-# **Technical Requirements Specification: ISO 27001 Compliant Multi-Tenant SaaS**
+# Technical Requirements Specification: ISO 27001 Compliant Multi-Tenant SaaS
 
-Version: 3.0 (Final Production Spec)  
-Date: November 23, 2025  
-Compliance Standard: ISO/IEC 27001:2022  
-Target Architecture: AWS Fargate (Docker) on ARM64 (Always-On)
+**Version:** 4.0 (Production Implementation)  
+**Date:** December 2025  
+**Compliance Standard:** ISO/IEC 27001:2022  
+**Target Architecture:** AWS Fargate (Docker) on ARM64 (Always-On)
 
-## **1\. Executive Summary**
+---
 
-This document defines the technical architecture for a multi-tenant SaaS application (Nuxt.js \+ Laravel). The architecture is designed for **ISO 27001 Compliance** with a specific focus on minimizing operational overhead for a small engineering team.
+## 1. Executive Summary
+
+This document defines the technical architecture for a multi-tenant SaaS application (Nuxt.js + Laravel). The architecture is designed for **ISO 27001 Compliance** with a specific focus on minimizing operational overhead for a small engineering team.
 
 **Strategic Decision:** We utilize an **"Always-On" Pure Fargate architecture**. This eliminates OS patch management (a major ISO burden) while maintaining high availability. We explicitly reject "Scale-to-Zero" strategies to ensure professional grade global availability.
 
-### **Key Architectural Decisions**
+### Key Architectural Decisions
 
-1. **Compute:** **AWS Fargate (Serverless)** for ALL workloads.  
-   * *Rationale:* Transfers OS patching responsibility to AWS (ISO Control A.12.6).  
-2. **Availability:** **Always-On (Min Replicas \= 2).**  
-   * *Rationale:* Eliminates "Cold Start" latency and scaling lag.  
-3. **Isolation:** Per-tenant S3 buckets with "Default Deny" policies.  
-4. **Traffic Flow:** "Backend-for-Frontend" (BFF) pattern.  
-   * *Rule:* Laravel is **never** exposed to the public internet. All traffic routes via Nuxt.
+| Decision | Implementation | ISO Rationale |
+|----------|---------------|---------------|
+| **Compute** | AWS Fargate (Serverless) for ALL workloads | Transfers OS patching to AWS (A.12.6) |
+| **Availability** | Always-On (Min Replicas = 2) | Eliminates cold start latency |
+| **Isolation** | Per-tenant S3 buckets with "Default Deny" policies | Data segregation (A.8.3) |
+| **Traffic Flow** | Backend-for-Frontend (BFF) pattern | Laravel never exposed publicly |
+| **Secrets** | AWS Secrets Manager for all credentials | Secure credential management (A.9.4) |
+| **Deployment** | Separate CI/CD pipelines per repository | Independent, auditable deployments |
 
-## **2\. Architecture Overview**
+---
 
-### **2.1 Traffic Flow Diagrams**
+## 2. Architecture Overview
 
-**A. Standard User Traffic (Browser)**
+### 2.1 High-Level Architecture
 
-sequenceDiagram  
-    participant User as Browser  
-    participant CF as Cloudflare WAF  
-    participant ALB as Public ALB  
-    participant Nuxt as Nuxt (Fargate)  
-    participant Laravel as Laravel (Fargate)  
-    participant DB as RDS/Redis
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Traffic Flow                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Users ──► Cloudflare ──► AWS WAF ──► Public ALB                           │
+│                                            │                                 │
+│                    ┌───────────────────────┼───────────────────────┐        │
+│                    │                       │                       │        │
+│                    ▼                       ▼                       ▼        │
+│              Tenant (Nuxt)            HQ (Nuxt)              Reverb (WS)    │
+│                    │                       │                                 │
+│                    └───────────┬───────────┘                                 │
+│                                │                                             │
+│                         Internal ALB                                         │
+│                                │                                             │
+│                    ┌───────────┴───────────┐                                 │
+│                    │                       │                                 │
+│                    ▼                       ▼                                 │
+│              API (Laravel)          Worker/Scheduler                         │
+│                    │                       │                                 │
+│                    └───────────┬───────────┘                                 │
+│                                │                                             │
+│                    ┌───────────┴───────────┐                                 │
+│                    ▼                       ▼                                 │
+│             RDS MariaDB            ElastiCache Redis                         │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-    User-\>\>CF: HTTPS Request (app.domain.com / admin.domain.com)  
-    CF-\>\>ALB: Forward Request  
-    ALB-\>\>Nuxt: Route to Tenant or HQ Service (Based on Host)  
-    Note right of Nuxt: SSR Rendering (Tenant or HQ)  
-    Nuxt-\>\>Laravel: Internal HTTP Call (internal.local)  
-    Laravel-\>\>DB: Query Data  
-    Laravel--\>\>Nuxt: JSON Response  
-    Nuxt--\>\>User: HTML/JSON Response
+### 2.2 Traffic Flow (Sequence)
 
-## **3\. AWS Infrastructure Requirements (Terraform)**
+```
+Browser → Cloudflare WAF → Public ALB → Nuxt (SSR) → Internal ALB → Laravel API → RDS/Redis
+                                  ↓
+                            Reverb (WebSocket)
+```
 
-All infrastructure must be provisioned via Terraform (IaC).
+**Key Rules:**
+- Laravel API is **never** exposed to the public internet
+- All browser traffic routes through Nuxt (BFF pattern)
+- WebSocket connections go directly to Reverb via Public ALB
 
-### **3.1 Network Topology (VPC)**
+---
 
-* **Subnets:**  
-  * Public Subnet A/B: Load Balancers, NAT Gateway.  
-  * Private Subnet A/B: Fargate Tasks (Nuxt, Laravel, Workers).  
-  * Data Subnet A/B: RDS, Redis.  
-* **Gateways:**  
-  * 1x **NAT Gateway** per AZ (Zone A & B). *Decision: Prioritize High Availability over cost savings.*  
-  * **VPC Endpoints:** S3 (Gateway), ECR, CloudWatch, SSM. *Critical: Keeps S3 traffic off the NAT Gateway to reduce data transfer costs.*
+## 3. AWS Infrastructure (Terraform)
 
-### **3.2 Compute Services (AWS Fargate \- ARM64)**
+All infrastructure is provisioned via Terraform. See `/infra/` for implementation.
 
-All services run on **Graviton (ARM64)**.
+### 3.1 Network Topology (VPC: 10.0.0.0/16)
 
-| Service Name | Role | Specs | Scaling |
-| :---- | :---- | :---- | :---- |
-| **nuxt-tenant** | Client Frontend | 0.5 vCPU / 1GB | Min: 2, Max: 10 |
-| **nuxt-hq** | Admin Frontend | 0.5 vCPU / 1GB | Fixed: 1 (Non-Scalable) |
-| **laravel-api** | Backend (Octane) | 0.5 vCPU / 1GB | Min: 2, Max: 10 |
-| **laravel-worker** | Queue Worker | 0.25 vCPU / 0.5GB | Min: 1, Max: 5 (Spot Allowed) |
-| **laravel-scheduler** | Cron Replacement | 0.25 vCPU / 0.5GB | Fixed: 1 |
+| Subnet Type | CIDR (AZ-A) | CIDR (AZ-B) | Contains |
+|-------------|-------------|-------------|----------|
+| **Public** | 10.0.1.0/24 | 10.0.2.0/24 | NAT Gateway, Public ALB |
+| **Private** | 10.0.11.0/24 | 10.0.12.0/24 | ECS Fargate tasks, Internal ALB |
+| **Data** | 10.0.21.0/24 | 10.0.22.0/24 | RDS, ElastiCache |
 
-* **Reverb (WebSockets):** Run as a separate process within the laravel-api task or a dedicated service depending on load.
+**Network Components:**
+- **NAT Gateways:** 2x (one per AZ for high availability)
+- **VPC Endpoints:** S3 (Gateway), ECR, CloudWatch, SSM, Secrets Manager
+- **Internet Gateway:** 1x (for public subnet egress)
 
-### **3.3 Data Layer**
+### 3.2 Compute Services (ECS Fargate - ARM64)
 
-* **Database:** AWS RDS MariaDB (db.t4g.small). Multi-AZ Enabled. Storage Encrypted (KMS).  
-* **Cache:** AWS ElastiCache Redis (cache.t4g.micro). Multi-AZ Enabled. Auth Token Required.  
-* **Storage:** S3 (Per-Tenant Buckets).  
-  * **Lifecycle:** Transition to GLACIER after 90 days.  
-  * **Versioning:** Enabled.
+All services run on **Graviton (ARM64)** for cost efficiency.
 
-## **4\. Application Development Requirements**
+| Service | Container | Port | CPU/Memory | Scaling |
+|---------|-----------|------|------------|---------|
+| **Tenant** | Nuxt 3 SSR | 3000 | 0.5 vCPU / 1GB | 2-10 (CPU-based) |
+| **HQ** | Nuxt 3 SSR | 3000 | 0.5 vCPU / 1GB | Fixed: 1 |
+| **API** | Laravel Octane | 8000 | 0.5 vCPU / 1GB | 2-10 (CPU-based) |
+| **Worker** | Laravel Queue | - | 0.25 vCPU / 0.5GB | 1-5 (Spot allowed) |
+| **Scheduler** | Laravel Cron | - | 0.25 vCPU / 0.5GB | Fixed: 1 |
+| **Reverb** | Laravel Reverb | 8080 | 0.25 vCPU / 0.5GB | Fixed: 1 |
 
-### **4.1 Nuxt.js (Frontend) Changes**
+### 3.3 Load Balancing
 
-1. **Proxy Configuration:**  
-   * Configure Nitro to proxy /api/\* to https://internal-api.yourdomain.com/\*.  
-   * **Must** forward Cookie, Authorization, and X-Forwarded-For headers.  
-2. **Malware Awareness:**  
-   * UI must handle "Pending Scan" state for file uploads.  
-   * *Logic:* If file is uploaded but not yet marked "Clean", show a "Scanning..." spinner instead of the download link.
+| ALB | Access | Listeners | Routing |
+|-----|--------|-----------|---------|
+| **Public** | Internet | HTTPS:443 | Host-based routing |
+| **Internal** | VPC only | HTTP:80 | Path-based routing |
 
-### **4.2 Laravel (Backend) Changes**
+**Public ALB Routing Rules:**
+- `Host: *.domain.com` → Tenant Target Group (port 3000)
+- `Host: admin.domain.com` → HQ Target Group (port 3000)
+- `Host: wss.domain.com` → Reverb Target Group (port 8080, sticky sessions)
 
-1. **Trusted Proxies:**  
-   * Trust the internal ALB CIDR range to correctly resolve client IPs.  
-2. **Octane Compatibility:**  
-   * Ensure no state leaks between requests (use Octane::bind for singletons).  
-3. **Pre-Signed URLs:**  
-   * **Upload:** POST /files/upload-url \-\> returns S3 PUT URL.  
-   * **Download:** GET /files/download-url \-\> returns S3 GET URL (only if ScanStatus=Clean).
+### 3.4 Data Layer
 
-## **5\. Security & Compliance Controls (ISO 27001\)**
+| Service | Engine | Instance | Configuration |
+|---------|--------|----------|---------------|
+| **RDS** | MariaDB 10.11 | db.t3.medium | Multi-AZ, KMS encrypted, 7-day backups |
+| **ElastiCache** | Redis 7 | cache.t3.micro | Multi-AZ, Auth token required |
 
-### **5.1 Malware Scanning (A.12.2)**
+### 3.5 Storage (S3)
 
-* **Workflow:** S3 Event \-\> Lambda (ClamAV) \-\> Tag Object.  
-* **Policy:** Bucket Policy explicitly denies GetObject unless tag ScanStatus=Clean exists.
+| Bucket Pattern | Purpose | Security |
+|----------------|---------|----------|
+| `{project}-{env}-tenant-*` | Per-tenant files | KMS encryption, versioning, TLS-only |
+| `{project}-{env}-pipeline-artifacts` | CI/CD artifacts | KMS encryption |
 
-### **5.2 Operational Security (A.12.1)**
+---
 
-* **SSH:** Disabled.  
-* **Database Access:** STRICTLY via **AWS SSM Session Manager** port forwarding. No public access.  
-* **Logging:** All app logs to stdout. Fargate routes to CloudWatch.
+## 4. CI/CD Architecture
 
-## **6\. Cost Estimate (Realistic Monthly)**
+Three independent pipelines (one per repository) using AWS CodePipeline + CodeBuild.
 
-*Estimates for eu-west-2 (London) including support services.*
+### 4.1 Pipeline Overview
 
-| Resource | Configuration | Est. Cost |
-| :---- | :---- | :---- |
-| **Fargate Compute** | Tenant (2x), HQ (1x), API (2x) \+ Workers | \~$50.00 |
-| **Load Balancers** | 1 Public \+ 1 Internal ALB | \~$45.00 |
-| **Database** | RDS MariaDB (t4g.small, Multi-AZ) | \~$68.00 |
-| **Redis** | ElastiCache (t4g.micro, Multi-AZ) | \~$24.00 |
-| **Networking** | 2 NAT Gateways \+ Data Transfer | \~$90.00 |
-| **Security Edge** | Cloudflare (Pro) \+ AWS WAF | \~$30.00 |
-| **Storage/Logs** | S3 \+ CloudWatch Ingestion | \~$20.00 |
-| **Total** |  | \*\*\~$327.00 / month\*\* |
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CI/CD Pipelines                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  API Repo ─────► Source → Build → Approval → Migrate → Deploy               │
+│  (GitHub)                                        │         │                 │
+│                                                  ▼         ▼                 │
+│                                                 RDS    API, Worker,          │
+│                                                        Scheduler, Reverb     │
+│                                                                              │
+│  Tenant Repo ──► Source → Build → Approval → Deploy → Tenant                │
+│  (GitHub)                                                                    │
+│                                                                              │
+│  HQ Repo ──────► Source → Build → Approval → Deploy → HQ                    │
+│  (GitHub)                                                                    │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-## **7\. Strategic "Escape Hatch" (Capacity Management)**
+### 4.2 Pipeline Stages
 
-*ISO 27001 A.12.1.3 (Capacity Management) requires planning for future growth.*
+| Stage | API Pipeline | Tenant/HQ Pipeline |
+|-------|--------------|-------------------|
+| **Source** | GitHub Release trigger | GitHub Release trigger |
+| **Build** | Docker image → ECR | Docker image → ECR |
+| **Approval** | Manual (production) | Manual (production) |
+| **Migrate** | `php artisan migrate --force` | N/A |
+| **Deploy** | ECS rolling update | ECS rolling update |
 
-**Trigger:** If monthly Fargate costs exceed **$1,500** (approx. 50x current traffic), or if Nuxt SSR CPU latency becomes unmanageable.
+### 4.3 Deployment Strategy
 
-**Migration Plan:**
+- **Rolling Deployment:** New tasks start before old tasks stop
+- **Circuit Breaker:** Automatic rollback on health check failures
+- **Image Tags:** Release tags (e.g., `v1.2.3`), not `latest`
 
-1. **Nuxt:** Move nuxt-ssr-service from Fargate to **EC2 Auto Scaling Group** (t4g.medium instances).  
-2. **No Refactor:** The architecture remains identical (ALB \-\> Target Group). Only the *compute target* changes from "IP" (Fargate) to "Instance" (EC2).  
-3. **Result:** This proves we are not "locked in" to Fargate's pricing model forever, satisfying risk management requirements.
+---
+
+## 5. Security & Compliance (ISO 27001)
+
+### 5.1 Access Control (A.9)
+
+| Control | Implementation |
+|---------|---------------|
+| A.9.1 Access Policy | IAM roles with least privilege |
+| A.9.2 User Access | No SSH; use ECS Exec for debugging |
+| A.9.4 Secrets | AWS Secrets Manager for all credentials |
+
+### 5.2 Cryptography (A.10)
+
+| Control | Implementation |
+|---------|---------------|
+| A.10.1 Encryption | KMS for S3, RDS, Redis, CI/CD artifacts |
+| A.10.1 TLS | HTTPS only; TLS 1.2+ enforced |
+
+### 5.3 Operations Security (A.12)
+
+| Control | Implementation |
+|---------|---------------|
+| A.12.1 Procedures | Terraform IaC; CodePipeline automation |
+| A.12.2 Malware | S3 event → Lambda scan → tag objects |
+| A.12.4 Logging | CloudWatch Logs (90-day retention) |
+| A.12.6 Patching | Fargate manages OS; ECR image scanning |
+
+### 5.4 Malware Scanning Workflow
+
+```
+S3 Upload → EventBridge → Lambda (ClamAV) → Tag: ScanStatus=Clean
+                                          ↓
+                              Bucket Policy: Deny GET unless Clean
+```
+
+**Current Status:** MVP uses fail-open (auto-tag as Clean). Full ClamAV integration planned.
+
+---
+
+## 6. Application Requirements
+
+### 6.1 Nuxt.js (Frontend)
+
+1. **API Proxy:** Configure Nitro to proxy `/api/*` to Internal ALB
+2. **Headers:** Forward `Cookie`, `Authorization`, `X-Forwarded-For`
+3. **File Uploads:** Handle "Pending Scan" state with UI feedback
+4. **WebSocket:** Connect to Reverb via `wss://wss.domain.com`
+
+### 6.2 Laravel (Backend)
+
+1. **Trusted Proxies:** Trust Internal ALB CIDR range
+2. **Octane:** Ensure no state leaks (use `Octane::bind` for singletons)
+3. **Pre-Signed URLs:**
+   - Upload: `POST /files/upload-url` → S3 PUT URL
+   - Download: `GET /files/download-url` → S3 GET URL (if `ScanStatus=Clean`)
+4. **Reverb:** Configure for Redis broadcasting
+
+---
+
+## 7. Cost Estimate
+
+*Estimates for eu-west-2 (London) region.*
+
+| Resource | Configuration | Est. Monthly Cost |
+|----------|---------------|-------------------|
+| **Fargate Compute** | 6 services (Tenant x2, HQ, API x2, Worker, Scheduler, Reverb) | ~$150-200 |
+| **Load Balancers** | 1 Public + 1 Internal ALB | ~$45-50 |
+| **RDS MariaDB** | db.t3.medium, Multi-AZ | ~$70-90 |
+| **ElastiCache Redis** | cache.t3.micro, Multi-AZ | ~$25-35 |
+| **NAT Gateways** | 2x (one per AZ) + data transfer | ~$70-100 |
+| **S3 + CloudWatch** | Storage, logs, metrics | ~$20-40 |
+| **CI/CD** | CodePipeline, CodeBuild | ~$10-20 |
+| **Total** | | **~$390-535 / month** |
+
+---
+
+## 8. Escape Hatch (Capacity Planning)
+
+*ISO 27001 A.12.1.3 (Capacity Management) requires planning for growth.*
+
+**Trigger:** Monthly Fargate costs exceed **$1,500** or SSR latency becomes unmanageable.
+
+**Migration Path:**
+1. Move Nuxt services from Fargate to **EC2 Auto Scaling Group** (Graviton instances)
+2. No application refactor required (ALB Target Group change only)
+3. Demonstrates we are not locked into Fargate pricing
+
+---
+
+## 9. Related Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Deployment Guide](./docs/deployment-guide.md) | Step-by-step AWS deployment |
+| [Deployment Checklist](./docs/deployment-checklist.md) | Quick reference checklist |
+| [CI/CD Setup](./docs/cicd-setup.md) | Pipeline configuration |
+| [Infrastructure Diagrams](./docs/infrastructure.md) | Architecture diagrams |
+| [Gap Analysis](./docs/terraform-gap-analysis.md) | Infrastructure improvements |
+
+---
+
+## 10. Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 4.0 | Dec 2025 | Added CI/CD pipelines, Reverb service, updated costs |
+| 3.0 | Nov 2025 | Final production spec |
+| 2.0 | Oct 2025 | Added Fargate architecture |
+| 1.0 | Sep 2025 | Initial draft |

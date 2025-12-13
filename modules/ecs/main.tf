@@ -53,8 +53,8 @@ resource "aws_iam_policy" "secrets_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = [
+        Effect = "Allow"
+        Action = [
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
@@ -99,6 +99,11 @@ resource "aws_iam_role_policy_attachment" "task_role_tenant_buckets" {
   policy_arn = var.tenant_bucket_provisioner_policy_arn
 }
 
+resource "aws_iam_role_policy_attachment" "task_role_s3_data" {
+  role       = aws_iam_role.task_role.name
+  policy_arn = var.tenant_bucket_data_access_policy_arn
+}
+
 # CloudWatch Logs
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ecs/${var.project_name}-${var.environment}-api"
@@ -107,6 +112,16 @@ resource "aws_cloudwatch_log_group" "api" {
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ecs/${var.project_name}-${var.environment}-worker"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "scheduler" {
+  name              = "/ecs/${var.project_name}-${var.environment}-scheduler"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "reverb" {
+  name              = "/ecs/${var.project_name}-${var.environment}-reverb"
   retention_in_days = 30
 }
 
@@ -127,11 +142,11 @@ resource "aws_ecs_task_definition" "api" {
   family                   = "${var.project_name}-${var.environment}-api"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = 512 # 0.5 vCPU
+  cpu                      = 512  # 0.5 vCPU
   memory                   = 1024 # 1 GB
   execution_role_arn       = aws_iam_role.execution_role.arn
   task_role_arn            = aws_iam_role.task_role.arn
-  
+
   runtime_platform {
     operating_system_family = "LINUX"
     cpu_architecture        = "ARM64"
@@ -151,19 +166,28 @@ resource "aws_ecs_task_definition" "api" {
       environment = [
         { name = "APP_ENV", value = var.environment },
         { name = "APP_KEY", value = var.app_key },
+        { name = "APP_URL", value = var.app_url },
+        { name = "DB_CONNECTION", value = "mysql" },
         { name = "DB_HOST", value = var.db_host },
+        { name = "DB_PORT", value = "3306" },
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
         { name = "REDIS_HOST", value = var.redis_host },
         { name = "REDIS_PORT", value = tostring(var.redis_port) },
+        { name = "REDIS_SCHEME", value = "tls" },
         { name = "CORS_ALLOWED_ORIGINS", value = var.cors_allowed_origins },
         { name = "APP_DEBUG", value = var.app_debug },
         { name = "OCTANE_SERVER", value = var.octane_server },
         { name = "SANCTUM_STATEFUL_DOMAINS", value = var.sanctum_stateful_domains },
-        { name = "SESSION_DOMAIN", value = var.session_domain }
+        { name = "SESSION_DOMAIN", value = var.session_domain },
+        { name = "REVERB_APP_ID", value = var.reverb_app_id },
+        { name = "REVERB_APP_KEY", value = var.reverb_app_key },
+        { name = "REVERB_APP_SECRET", value = var.reverb_app_secret },
+        { name = "REVERB_HOST", value = "0.0.0.0" },
+        { name = "REVERB_PORT", value = "8080" }
       ]
       secrets = [
-        { name = "DB_PASSWORD", valueFrom = var.db_password_arn },
+        { name = "DB_PASSWORD", valueFrom = "${var.db_password_arn}:password::" },
         { name = "REDIS_PASSWORD", valueFrom = var.redis_auth_token_arn }
       ]
       logConfiguration = {
@@ -196,20 +220,27 @@ resource "aws_ecs_task_definition" "worker" {
 
   container_definitions = jsonencode([
     {
-      name  = "worker"
-      image = "${var.api_repo_url}:${var.api_image_tag}"
+      name    = "worker"
+      image   = "${var.api_repo_url}:${var.api_image_tag}"
       command = ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/worker.conf"]
       environment = [
         { name = "APP_ENV", value = var.environment },
         { name = "APP_KEY", value = var.app_key },
+        { name = "APP_URL", value = var.app_url },
+        { name = "DB_CONNECTION", value = "mysql" },
         { name = "DB_HOST", value = var.db_host },
+        { name = "DB_PORT", value = "3306" },
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
         { name = "REDIS_HOST", value = var.redis_host },
-        { name = "REDIS_PORT", value = tostring(var.redis_port) }
+        { name = "REDIS_PORT", value = tostring(var.redis_port) },
+        { name = "REDIS_SCHEME", value = "tls" },
+        { name = "CORS_ALLOWED_ORIGINS", value = var.cors_allowed_origins },
+        { name = "SANCTUM_STATEFUL_DOMAINS", value = var.sanctum_stateful_domains },
+        { name = "SESSION_DOMAIN", value = var.session_domain }
       ]
       secrets = [
-        { name = "DB_PASSWORD", valueFrom = var.db_password_arn },
+        { name = "DB_PASSWORD", valueFrom = "${var.db_password_arn}:password::" },
         { name = "REDIS_PASSWORD", valueFrom = var.redis_auth_token_arn }
       ]
       logConfiguration = {
@@ -230,7 +261,7 @@ resource "aws_ecs_task_definition" "tenant" {
   family                   = "${var.project_name}-${var.environment}-tenant"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = 512 # 0.5 vCPU
+  cpu                      = 512  # 0.5 vCPU
   memory                   = 1024 # 1 GB
   execution_role_arn       = aws_iam_role.execution_role.arn
   task_role_arn            = aws_iam_role.task_role.arn
@@ -252,9 +283,14 @@ resource "aws_ecs_task_definition" "tenant" {
         }
       ]
       environment = [
+        { name = "NUXT_PUBLIC_BASE_URL", value = var.nuxt_api_base_server },
         { name = "NUXT_API_BASE_SERVER", value = var.nuxt_api_base_server },
         { name = "NUXT_PUBLIC_API_BASE_CLIENT", value = "${var.nuxt_public_api_protocol}://${var.public_alb_dns_name}${var.nuxt_public_api_port}/api/v1" },
-        { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = var.node_tls_reject_unauthorized }
+        { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = var.node_tls_reject_unauthorized },
+        { name = "NUXT_PUBLIC_TENANT_PRIMARY_DOMAIN", value = var.tenant_primary_domain },
+        { name = "NUXT_PUBLIC_REVERB_APP_KEY", value = var.reverb_app_key },
+        { name = "NUXT_PUBLIC_REVERB_HOST", value = var.reverb_public_host },
+        { name = "NUXT_PUBLIC_REVERB_PORT", value = "443" }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -274,7 +310,7 @@ resource "aws_ecs_task_definition" "hq" {
   family                   = "${var.project_name}-${var.environment}-hq"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = 512 # 0.5 vCPU
+  cpu                      = 512  # 0.5 vCPU
   memory                   = 1024 # 1 GB
   execution_role_arn       = aws_iam_role.execution_role.arn
   task_role_arn            = aws_iam_role.task_role.arn
@@ -297,8 +333,14 @@ resource "aws_ecs_task_definition" "hq" {
       ]
       environment = [
         { name = "NUXT_PUBLIC_APP_ENV", value = var.environment },
+        { name = "NUXT_PUBLIC_BASE_URL", value = "http://${var.internal_alb_dns_name}" },
         { name = "NUXT_API_BASE_SERVER", value = "http://${var.internal_alb_dns_name}" },
-        { name = "NUXT_PUBLIC_API_BASE_CLIENT", value = "${var.nuxt_public_api_protocol}://${var.public_alb_dns_name}${var.nuxt_public_api_port}/api/v1" }
+        { name = "NUXT_PUBLIC_API_BASE_CLIENT", value = "${var.nuxt_public_api_protocol}://${var.public_alb_dns_name}${var.nuxt_public_api_port}/api/v1" },
+        { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = var.node_tls_reject_unauthorized },
+        { name = "NUXT_PUBLIC_TENANT_PRIMARY_DOMAIN", value = var.tenant_primary_domain },
+        { name = "NUXT_PUBLIC_REVERB_APP_KEY", value = var.reverb_app_key },
+        { name = "NUXT_PUBLIC_REVERB_HOST", value = var.reverb_public_host },
+        { name = "NUXT_PUBLIC_REVERB_PORT", value = "443" }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -329,28 +371,95 @@ resource "aws_ecs_task_definition" "scheduler" {
 
   container_definitions = jsonencode([
     {
-      name  = "scheduler"
-      image = "${var.api_repo_url}:${var.api_image_tag}"
+      name    = "scheduler"
+      image   = "${var.api_repo_url}:${var.api_image_tag}"
       command = ["php", "artisan", "schedule:work"]
       environment = [
         { name = "APP_ENV", value = var.environment },
         { name = "APP_KEY", value = var.app_key },
+        { name = "APP_URL", value = var.app_url },
+        { name = "DB_CONNECTION", value = "mysql" },
         { name = "DB_HOST", value = var.db_host },
+        { name = "DB_PORT", value = "3306" },
         { name = "DB_DATABASE", value = var.db_name },
         { name = "DB_USERNAME", value = var.db_username },
         { name = "REDIS_HOST", value = var.redis_host },
-        { name = "REDIS_PORT", value = tostring(var.redis_port) }
+        { name = "REDIS_PORT", value = tostring(var.redis_port) },
+        { name = "REDIS_SCHEME", value = "tls" },
+        { name = "SANCTUM_STATEFUL_DOMAINS", value = var.sanctum_stateful_domains },
+        { name = "SESSION_DOMAIN", value = var.session_domain }
       ]
       secrets = [
-        { name = "DB_PASSWORD", valueFrom = var.db_password_arn },
+        { name = "DB_PASSWORD", valueFrom = "${var.db_password_arn}:password::" },
         { name = "REDIS_PASSWORD", valueFrom = var.redis_auth_token_arn }
       ]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.worker.name # Reuse worker log group or create new? I'll reuse for simplicity or create new. I'll reuse.
+          "awslogs-group"         = aws_cloudwatch_log_group.scheduler.name
           "awslogs-region"        = var.region
-          "awslogs-stream-prefix" = "ecs-scheduler"
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+    }
+  ])
+}
+
+# Laravel Reverb (WebSocket)
+resource "aws_ecs_task_definition" "reverb" {
+  family                   = "${var.project_name}-${var.environment}-reverb"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = 256 # 0.25 vCPU
+  memory                   = 512 # 0.5 GB
+  execution_role_arn       = aws_iam_role.execution_role.arn
+  task_role_arn            = aws_iam_role.task_role.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name    = "reverb"
+      image   = "${var.api_repo_url}:${var.api_image_tag}"
+      command = ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]
+      portMappings = [
+        {
+          containerPort = 8080
+          hostPort      = 8080
+          protocol      = "tcp"
+        }
+      ]
+      environment = [
+        { name = "APP_ENV", value = var.environment },
+        { name = "APP_KEY", value = var.app_key },
+        { name = "APP_URL", value = var.app_url },
+        { name = "DB_CONNECTION", value = "mysql" },
+        { name = "DB_HOST", value = var.db_host },
+        { name = "DB_PORT", value = "3306" },
+        { name = "DB_DATABASE", value = var.db_name },
+        { name = "DB_USERNAME", value = var.db_username },
+        { name = "REDIS_HOST", value = var.redis_host },
+        { name = "REDIS_PORT", value = tostring(var.redis_port) },
+        { name = "REDIS_SCHEME", value = "tls" },
+        { name = "REVERB_APP_ID", value = var.reverb_app_id },
+        { name = "REVERB_APP_KEY", value = var.reverb_app_key },
+        { name = "REVERB_APP_SECRET", value = var.reverb_app_secret },
+        { name = "REVERB_HOST", value = "0.0.0.0" },
+        { name = "REVERB_PORT", value = "8080" }
+      ]
+      secrets = [
+        { name = "DB_PASSWORD", valueFrom = "${var.db_password_arn}:password::" },
+        { name = "REDIS_PASSWORD", valueFrom = var.redis_auth_token_arn }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.reverb.name
+          "awslogs-region"        = var.region
+          "awslogs-stream-prefix" = "ecs"
         }
       }
     }

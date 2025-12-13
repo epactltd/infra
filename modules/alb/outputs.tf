@@ -17,3 +17,11 @@ output "hq_tg_arn" {
 output "api_tg_arn" {
   value = aws_lb_target_group.api.arn
 }
+
+output "api_public_tg_arn" {
+  value = aws_lb_target_group.api_public.arn
+}
+
+output "reverb_tg_arn" {
+  value = aws_lb_target_group.reverb.arn
+}

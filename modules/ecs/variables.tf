@@ -63,7 +63,7 @@ variable "nuxt_public_api_port" {
 
 variable "extra_hosts" {
   description = "List of extra hosts to add to /etc/hosts"
-  type        = list(object({
+  type = list(object({
     hostname  = string
     ipAddress = string
   }))
@@ -152,10 +152,61 @@ variable "hq_tg_arn" {
 }
 
 variable "api_tg_arn" {
+  description = "Target group ARN for API (internal ALB)"
+  type        = string
+}
+
+variable "api_public_tg_arn" {
   type = string
 }
 
 variable "tenant_bucket_provisioner_policy_arn" {
   description = "IAM policy ARN that allows the HQ app to provision per-tenant buckets"
+  type        = string
+}
+
+variable "tenant_bucket_data_access_policy_arn" {
+  description = "IAM policy ARN that allows file operations on tenant buckets"
+  type        = string
+}
+
+variable "app_url" {
+  description = "The application URL for Laravel (e.g., https://api.envelope.host)"
+  type        = string
+}
+
+variable "tenant_primary_domain" {
+  description = "Primary domain for tenants (e.g., envelope.host for *.envelope.host)"
+  type        = string
+}
+
+variable "reverb_app_id" {
+  description = "Reverb application ID"
+  type        = string
+}
+
+variable "reverb_app_key" {
+  description = "Reverb application key"
+  type        = string
+}
+
+variable "reverb_app_secret" {
+  description = "Reverb application secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "reverb_public_host" {
+  description = "Public host for Reverb WebSocket connections (e.g., wss.envelope.host)"
+  type        = string
+}
+
+variable "reverb_sg_id" {
+  description = "Security group ID for Reverb service"
+  type        = string
+}
+
+variable "reverb_tg_arn" {
+  description = "Target group ARN for Reverb service"
   type        = string
 }

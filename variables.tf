@@ -23,13 +23,13 @@ variable "vpc_cidr" {
 }
 
 variable "cors_allowed_origins" {
-  description = "Allowed origins for CORS"
+  description = "Allowed origins for CORS (e.g., https://*.envelope.host,https://admin.envelope.host)"
   type        = string
   default     = "*"
 
   validation {
-    condition     = !can(regex("\\*", var.cors_allowed_origins))
-    error_message = "cors_allowed_origins must not be wildcard."
+    condition     = var.cors_allowed_origins != "*"
+    error_message = "cors_allowed_origins must not be a standalone wildcard '*'. Use specific domains like 'https://*.envelope.host'."
   }
 }
 
@@ -71,7 +71,7 @@ variable "nuxt_public_api_port" {
 
 variable "extra_hosts" {
   description = "List of extra hosts to add to /etc/hosts"
-  type        = list(object({
+  type = list(object({
     hostname  = string
     ipAddress = string
   }))
@@ -113,25 +113,15 @@ variable "acm_certificate_arn" {
 }
 
 variable "alb_access_logs_bucket" {
-  description = "S3 bucket name for ALB access logs (optional)."
+  description = "S3 bucket name for ALB access logs (optional, leave empty to disable)."
   type        = string
   default     = ""
-
-  validation {
-    condition     = length(var.alb_access_logs_bucket) > 0
-    error_message = "Provide an ALB access log bucket."
-  }
 }
 
 variable "alb_web_acl_arn" {
-  description = "WAFv2 Web ACL ARN to associate with the public ALB (optional)."
+  description = "WAFv2 Web ACL ARN to associate with the public ALB (optional, leave empty to disable)."
   type        = string
   default     = ""
-
-  validation {
-    condition     = length(var.alb_web_acl_arn) > 0
-    error_message = "Provide a WAF web ACL ARN."
-  }
 }
 
 variable "enable_alb_deletion_protection" {
@@ -222,4 +212,105 @@ variable "hq_image_tag" {
 variable "hq_host" {
   description = "Host header value for HQ application routing"
   type        = string
+}
+
+variable "api_host" {
+  description = "Host header value for API routing (e.g., api.envelope.host)"
+  type        = string
+}
+
+# Reverb / WebSocket Configuration
+variable "reverb_host" {
+  description = "Host header value for Reverb WebSocket routing (e.g., wss.envelope.host)"
+  type        = string
+}
+
+variable "reverb_app_id" {
+  description = "Reverb application ID"
+  type        = string
+}
+
+variable "reverb_app_key" {
+  description = "Reverb application key"
+  type        = string
+}
+
+variable "reverb_app_secret" {
+  description = "Reverb application secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "reverb_public_host" {
+  description = "Public host for Reverb WebSocket connections (e.g., wss.envelope.host)"
+  type        = string
+}
+
+# Application Configuration
+variable "app_url" {
+  description = "The application URL for Laravel (e.g., https://api.envelope.host)"
+  type        = string
+}
+
+variable "tenant_primary_domain" {
+  description = "Primary domain for tenants (e.g., envelope.host for *.envelope.host)"
+  type        = string
+}
+
+# -----------------------------------------------------------------------------
+# CI/CD Configuration (Separate pipelines per repository)
+# -----------------------------------------------------------------------------
+
+variable "enable_cicd" {
+  description = "Enable CI/CD infrastructure (CodePipeline + CodeBuild)"
+  type        = bool
+  default     = false
+}
+
+variable "api_github_repository" {
+  description = "GitHub repository for API in format owner/repo (e.g., my-org/envelope-api)"
+  type        = string
+  default     = ""
+}
+
+variable "tenant_github_repository" {
+  description = "GitHub repository for Tenant in format owner/repo (e.g., my-org/envelope-tenant)"
+  type        = string
+  default     = ""
+}
+
+variable "hq_github_repository" {
+  description = "GitHub repository for HQ in format owner/repo (e.g., my-org/envelope-hq)"
+  type        = string
+  default     = ""
+}
+
+variable "github_branch" {
+  description = "GitHub branch to monitor for releases"
+  type        = string
+  default     = "main"
+}
+
+variable "cicd_kms_key_arn" {
+  description = "KMS key ARN for encrypting CI/CD artifacts"
+  type        = string
+  default     = ""
+}
+
+variable "app_key_secret_arn" {
+  description = "Secrets Manager ARN for Laravel APP_KEY (used for API migrations)"
+  type        = string
+  default     = ""
+}
+
+variable "cicd_require_manual_approval" {
+  description = "Require manual approval before deployment (recommended for production)"
+  type        = bool
+  default     = true
+}
+
+variable "cicd_approval_sns_topic_arn" {
+  description = "SNS topic ARN for deployment approval notifications"
+  type        = string
+  default     = ""
 }

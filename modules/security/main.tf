@@ -84,11 +84,20 @@ resource "aws_security_group" "laravel" {
   description = "Security group for Laravel tasks"
   vpc_id      = var.vpc_id
 
+  # Allow traffic from internal ALB (for Nuxt SSR)
   ingress {
     from_port       = 8000
     to_port         = 8000
     protocol        = "tcp"
     security_groups = [aws_security_group.internal_alb.id]
+  }
+
+  # Allow traffic from public ALB (for api.envelope.host)
+  ingress {
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.public_alb.id]
   }
 
   egress {
@@ -103,6 +112,30 @@ resource "aws_security_group" "laravel" {
   }
 }
 
+resource "aws_security_group" "reverb" {
+  name        = "${var.project_name}-${var.environment}-reverb-sg"
+  description = "Security group for Reverb WebSocket tasks"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.public_alb.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-reverb-sg"
+  }
+}
+
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-${var.environment}-rds-sg"
   description = "Security group for RDS"
@@ -112,7 +145,7 @@ resource "aws_security_group" "rds" {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [aws_security_group.laravel.id]
+    security_groups = [aws_security_group.laravel.id, aws_security_group.reverb.id]
   }
 
   tags = {
@@ -129,7 +162,7 @@ resource "aws_security_group" "redis" {
     from_port       = 6379
     to_port         = 6379
     protocol        = "tcp"
-    security_groups = [aws_security_group.laravel.id]
+    security_groups = [aws_security_group.laravel.id, aws_security_group.reverb.id]
   }
 
   tags = {

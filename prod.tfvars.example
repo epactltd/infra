@@ -18,11 +18,12 @@ extra_hosts                = []
 nuxt_api_base_server       = ""
 node_tls_reject_unauthorized = "1"
 app_key                    = "replace-with-base64-app-key"
+app_url                    = "https://api.envelope.example"  # Laravel APP_URL
 
 # ALB / TLS / WAF
-acm_certificate_arn        = "arn:aws:acm:eu-west-2:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-alb_access_logs_bucket     = "envelope-alb-logs"
-alb_web_acl_arn            = "" # optional
+acm_certificate_arn            = "arn:aws:acm:eu-west-2:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+alb_access_logs_bucket         = "envelope-alb-logs"  # Optional: leave empty to disable
+alb_web_acl_arn                = ""  # Optional: leave empty to disable WAF
 enable_alb_deletion_protection = true
 
 # Database
@@ -37,7 +38,41 @@ preferred_maintenance_window   = "Sun:03:00-Sun:04:00"
 rds_deletion_protection        = true
 rds_max_allocated_storage      = 200
 
-# Images (pin to immutable tags or digests)
+# Host routing (REQUIRED)
+hq_host                    = "admin.envelope.example"  # Host header for HQ ALB routing
+
+# Tenant configuration
+tenant_primary_domain      = "envelope.example"  # Primary domain for tenants (e.g., *.envelope.example)
+
+# Reverb / WebSocket (REQUIRED)
+reverb_host                = "wss.envelope.example"    # Host header for Reverb ALB routing
+reverb_public_host         = "wss.envelope.example"    # Public WebSocket host for clients
+reverb_app_id              = "envelope-prod"           # Reverb application ID
+reverb_app_key             = "replace-with-reverb-key" # Reverb application key
+reverb_app_secret          = "replace-with-reverb-secret"  # Reverb application secret (sensitive)
+
+# Images (pin to immutable tags or digests for reproducible deployments)
 api_image_tag    = "v1.2.3"
 tenant_image_tag = "v1.2.3"
 hq_image_tag     = "v1.2.3"
+
+# -----------------------------------------------------------------------------
+# CI/CD Configuration (Optional - Enable with enable_cicd = true)
+# Separate pipelines for each repository
+# -----------------------------------------------------------------------------
+
+enable_cicd = false  # Set to true to provision CodePipeline + CodeBuild
+
+# GitHub repositories (separate repo per service)
+api_github_repository    = "your-org/envelope-api"     # Laravel API repository
+tenant_github_repository = "your-org/envelope-tenant"  # Nuxt Tenant repository
+hq_github_repository     = "your-org/envelope-hq"      # Nuxt HQ repository
+github_branch            = "main"
+
+# Security
+cicd_kms_key_arn   = ""  # KMS key ARN for artifact encryption (create or use existing)
+app_key_secret_arn = ""  # Secrets Manager ARN containing Laravel APP_KEY (for API migrations)
+
+# Approval (recommended for production)
+cicd_require_manual_approval = true  # Require approval before deploying to production
+cicd_approval_sns_topic_arn  = ""    # SNS topic for approval notifications

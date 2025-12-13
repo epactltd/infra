@@ -8,8 +8,8 @@ resource "aws_elasticache_subnet_group" "main" {
 }
 
 resource "random_password" "auth_token" {
-  length           = 32
-  special          = false # Redis auth token doesn't like some special chars sometimes, safer to be alphanumeric
+  length  = 32
+  special = false # Redis auth token doesn't like some special chars sometimes, safer to be alphanumeric
 }
 
 resource "aws_secretsmanager_secret" "redis_auth" {
@@ -27,8 +27,8 @@ resource "aws_secretsmanager_secret_version" "redis_auth" {
 }
 
 resource "aws_secretsmanager_secret_rotation" "redis_auth" {
-  count             = var.rotation_lambda_arn == "" ? 0 : 1
-  secret_id         = aws_secretsmanager_secret.redis_auth.id
+  count               = var.rotation_lambda_arn == "" ? 0 : 1
+  secret_id           = aws_secretsmanager_secret.redis_auth.id
   rotation_lambda_arn = var.rotation_lambda_arn
   rotation_rules {
     automatically_after_days = 30
@@ -41,9 +41,9 @@ resource "aws_elasticache_replication_group" "main" {
   node_type            = "cache.t4g.micro"
   port                 = 6379
   parameter_group_name = "default.redis7"
-  
-  subnet_group_name    = aws_elasticache_subnet_group.main.name
-  security_group_ids   = [var.security_group_id]
+
+  subnet_group_name  = aws_elasticache_subnet_group.main.name
+  security_group_ids = [var.security_group_id]
 
   automatic_failover_enabled = true
   multi_az_enabled           = true

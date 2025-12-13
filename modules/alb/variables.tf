@@ -54,3 +54,13 @@ variable "hq_host" {
   description = "Host header value for HQ application routing"
   type        = string
 }
+
+variable "reverb_host" {
+  description = "Host header value for Reverb WebSocket routing (e.g., wss.envelope.host)"
+  type        = string
+}
+
+variable "api_host" {
+  description = "Host header value for API routing (e.g., api.envelope.host)"
+  type        = string
+}

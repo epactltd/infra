@@ -15,17 +15,17 @@ resource "aws_db_instance" "main" {
   allocated_storage = 20
   storage_type      = "gp3"
 
-  username                       = var.db_username
-  db_name                        = var.db_name
-  manage_master_user_password    = var.manage_master_user_password
-  password                       = var.manage_master_user_password ? null : coalesce(var.db_password, random_password.fallback[0].result)
-  backup_retention_period        = var.backup_retention_period
-  preferred_backup_window        = var.preferred_backup_window
-  preferred_maintenance_window   = var.preferred_maintenance_window
-  deletion_protection            = var.deletion_protection
-  copy_tags_to_snapshot          = true
-  max_allocated_storage          = var.max_allocated_storage
-  auto_minor_version_upgrade     = true
+  username                    = var.db_username
+  db_name                     = var.db_name
+  manage_master_user_password = var.manage_master_user_password
+  password                    = var.manage_master_user_password ? null : coalesce(var.db_password, random_password.fallback[0].result)
+  backup_retention_period     = var.backup_retention_period
+  backup_window               = var.preferred_backup_window
+  maintenance_window          = var.preferred_maintenance_window
+  deletion_protection         = var.deletion_protection
+  copy_tags_to_snapshot       = true
+  max_allocated_storage       = var.max_allocated_storage
+  auto_minor_version_upgrade  = true
 
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [var.security_group_id]

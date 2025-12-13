@@ -55,9 +55,31 @@ resource "aws_lb_target_group" "hq" {
   target_type = "ip"
 
   health_check {
-    path                = "/admin/"
+    path                = "/"
     healthy_threshold   = 2
     unhealthy_threshold = 10
+  }
+}
+
+resource "aws_lb_target_group" "reverb" {
+  name        = "${var.project_name}-${var.environment}-reverb-tg"
+  port        = 8080
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/"
+    healthy_threshold   = 2
+    unhealthy_threshold = 10
+    matcher             = "200,426" # 426 = Upgrade Required (expected for WS)
+  }
+
+  # Sticky sessions for WebSocket connections
+  stickiness {
+    type            = "lb_cookie"
+    cookie_duration = 86400
+    enabled         = true
   }
 }
 
@@ -93,6 +115,53 @@ resource "aws_lb_listener_rule" "hq" {
   }
 }
 
+resource "aws_lb_listener_rule" "reverb" {
+  listener_arn = aws_lb_listener.public_https.arn
+  priority     = 50
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.reverb.arn
+  }
+
+  condition {
+    host_header {
+      values = [var.reverb_host]
+    }
+  }
+}
+
+# Public-facing API target group (separate from internal API TG)
+resource "aws_lb_target_group" "api_public" {
+  name        = "${var.project_name}-${var.environment}-api-pub-tg"
+  port        = 8000
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/up"
+    healthy_threshold   = 2
+    unhealthy_threshold = 10
+  }
+}
+
+resource "aws_lb_listener_rule" "api" {
+  listener_arn = aws_lb_listener.public_https.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api_public.arn
+  }
+
+  condition {
+    host_header {
+      values = [var.api_host]
+    }
+  }
+}
+
 # Internal ALB
 resource "aws_lb" "internal" {
   name               = "${var.project_name}-${var.environment}-internal-alb"
@@ -116,7 +185,7 @@ resource "aws_lb_target_group" "api" {
   target_type = "ip"
 
   health_check {
-    path                = "/api/health" # Assuming a health check endpoint exists
+    path                = "/up" # Laravel's default health endpoint
     healthy_threshold   = 2
     unhealthy_threshold = 10
   }
