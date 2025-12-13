@@ -34,11 +34,12 @@ resource "aws_lb_listener" "public_https" {
 }
 
 resource "aws_lb_target_group" "tenant" {
-  name        = "${var.project_name}-${var.environment}-tenant-tg"
-  port        = 3000
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+  name                 = "${var.project_name}-${var.environment}-tenant-tg"
+  port                 = 3000
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = 30
 
   health_check {
     path                = "/"
@@ -48,11 +49,12 @@ resource "aws_lb_target_group" "tenant" {
 }
 
 resource "aws_lb_target_group" "hq" {
-  name        = "${var.project_name}-${var.environment}-hq-tg"
-  port        = 3000
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+  name                 = "${var.project_name}-${var.environment}-hq-tg"
+  port                 = 3000
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = 30
 
   health_check {
     path                = "/"
@@ -62,11 +64,12 @@ resource "aws_lb_target_group" "hq" {
 }
 
 resource "aws_lb_target_group" "reverb" {
-  name        = "${var.project_name}-${var.environment}-reverb-tg"
-  port        = 8080
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+  name                 = "${var.project_name}-${var.environment}-reverb-tg"
+  port                 = 8080
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = 30
 
   health_check {
     path                = "/"
@@ -133,11 +136,12 @@ resource "aws_lb_listener_rule" "reverb" {
 
 # Public-facing API target group (separate from internal API TG)
 resource "aws_lb_target_group" "api_public" {
-  name        = "${var.project_name}-${var.environment}-api-pub-tg"
-  port        = 8000
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+  name                 = "${var.project_name}-${var.environment}-api-pub-tg"
+  port                 = 8000
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = 30
 
   health_check {
     path                = "/up"
@@ -178,11 +182,12 @@ resource "aws_lb" "internal" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = "${var.project_name}-${var.environment}-api-tg"
-  port        = 8000
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+  name                 = "${var.project_name}-${var.environment}-api-tg"
+  port                 = 8000
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = 30
 
   health_check {
     path                = "/up" # Laravel's default health endpoint
