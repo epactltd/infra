@@ -815,8 +815,16 @@ show_main_menu() {
 main() {
     # Check if docker is available
     if ! command -v docker &> /dev/null; then
-        print_error "Docker is not installed or not in PATH"
-        exit 1
+        # Try to find Docker in common macOS locations
+        if [ -f "/Applications/Docker.app/Contents/Resources/bin/docker" ]; then
+            export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+        elif [ -f "/usr/local/bin/docker" ]; then
+            export PATH="/usr/local/bin:$PATH"
+        else
+            print_error "Docker is not installed or not in PATH"
+            print_info "Please ensure Docker Desktop is installed and running"
+            exit 1
+        fi
     fi
     
     # Check if docker-compose file exists
