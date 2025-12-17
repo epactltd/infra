@@ -139,6 +139,10 @@ module "s3" {
 
   project_name = var.project_name
   environment  = var.environment
+  
+  # Must match the naming convention used by tenant_provisioning module
+  # Buckets are named: envelope-tenant-{id}-prod
+  tenant_bucket_prefix_override = "${var.project_name}-tenant-"
 }
 
 # Tenant Provisioning Module - EventBridge + Lambda for S3 bucket provisioning
