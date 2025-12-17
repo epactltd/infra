@@ -183,6 +183,25 @@ def create_bucket(tenant_id: str) -> dict:
     )
     print("Tags applied")
     
+    # Configure CORS for browser uploads
+    s3.put_bucket_cors(
+        Bucket=bucket_name,
+        CORSConfiguration={
+            "CORSRules": [{
+                "AllowedHeaders": ["*"],
+                "AllowedMethods": ["GET", "PUT", "POST", "HEAD"],
+                "AllowedOrigins": [
+                    "https://*.envelope.host",
+                    "http://localhost:3000",
+                    "http://localhost:3001"
+                ],
+                "ExposeHeaders": ["ETag", "x-amz-meta-*"],
+                "MaxAgeSeconds": 3600
+            }]
+        }
+    )
+    print("CORS configuration applied")
+    
     return {"bucket": bucket_name, "region": REGION, "status": "created"}
 
 
