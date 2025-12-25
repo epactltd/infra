@@ -101,17 +101,26 @@ fi
 
 # Fallback: Print PR URL
 print_info "GitHub CLI not available or failed. Use the URL below to create PR manually:"
-repo_url=$(git config --get remote.origin.url | sed 's#https://github.com/##;s#git@github.com:##;s#\.git$##')
+repo_url=$(git config --get remote.origin.url | sed 's#https://github.com/##;s#git@[^:]*:##;s#\.git$##')
 pr_url="https://github.com/$repo_url/compare/$target...$current_branch?expand=1"
 print_info "PR URL: $pr_url"
 
 # Try to open browser
-if [ "$OSTYPE" = "msys" ] || [ "$OSTYPE" = "cygwin" ]; then
-  start "$pr_url" 2>/dev/null || true
-elif [ "$OSTYPE" = "darwin" ]; then
-  open "$pr_url" 2>/dev/null || true
-elif [ "$OSTYPE" = "linux-gnu" ]; then
-  xdg-open "$pr_url" 2>/dev/null || true
-fi
+# Detect OS using OSTYPE or fallback to uname
+os_type="${OSTYPE:-$(uname -s)}"
+case "$os_type" in
+  msys|cygwin|MINGW*)
+    start "$pr_url" 2>/dev/null || true
+    ;;
+  darwin*|Darwin)
+    open "$pr_url" 2>/dev/null || true
+    ;;
+  linux*|Linux)
+    xdg-open "$pr_url" 2>/dev/null || true
+    ;;
+  *)
+    print_warning "Unknown OS type: $os_type. Please open the URL manually."
+    ;;
+esac
 
 print_success "PR URL generated. Please create the PR manually if needed."

@@ -90,7 +90,8 @@ This project uses a Git Flow workflow with protected branches:
      # Creates: hotfix/critical-login-bug
      # Switches to the new branch automatically
 
-4. 📤 git/push.sh "commit message"
+4. 📤 git/push.sh <type> "<message>"
+   git/push.sh <type> breaking "<message>"
    Commits and safely pushes current branch
 
    Rules:
@@ -102,7 +103,7 @@ This project uses a Git Flow workflow with protected branches:
    • Then: git push -u origin <branch>
 
    Example:
-     git/push.sh "Add user authentication"
+     git/push.sh feat "add user authentication"
      # Adds, commits, pulls with rebase, then pushes current branch
 
 5. 📋 git/pr.sh [dev|main]
@@ -141,18 +142,34 @@ This project uses a Git Flow workflow with protected branches:
    Automates production releases using semantic versioning
 
    Rules:
-   • Must be executed from dev branch
+   • Must be executed from dev or main branch
    • Fails if working tree is dirty
    • Finds latest tag (vX.Y.Z)
    • Auto-increments version
+   • If `gh` is available: publishes a GitHub Release and saves release notes locally
 
    RELEASE FLOW:
+   If run from dev (full release train):
    1. Validate on dev
    2. Calculate new version
    3. Checkout main, pull latest
    4. Merge dev into main
    5. Create tag: vX.Y.Z
    6. Push main and tag
+   7. Publish GitHub Release (triggers deploy)
+   7b. Save generated release notes to git/releases/<tag>.md and git/release-note.txt
+   8. Checkout dev
+   9. Merge main back into dev
+   10. Push dev
+
+   If run from main (hotfix-style release):
+   1. Validate on main
+   2. Calculate new version
+   3. Pull latest main
+   4. Create tag: vX.Y.Z
+   5. Push main and tag
+   6. Publish GitHub Release (triggers deploy)
+   6b. Save generated release notes to git/releases/<tag>.md and git/release-note.txt
    7. Checkout dev
    8. Merge main back into dev
    9. Push dev
@@ -173,7 +190,7 @@ This project uses a Git Flow workflow with protected branches:
      git/feature.sh "new-feature-name"
 
   2. Make your changes, then push:
-     git/push.sh "Implement feature X"
+     git/push.sh feat "implement feature X"
      # Adds, commits, and pushes automatically
 
   3. When complete, close branch:
@@ -187,7 +204,7 @@ This project uses a Git Flow workflow with protected branches:
      git/bugfix.sh "fix-bug-description"
 
   2. Fix the bug, then push:
-     git/push.sh "Fix the bug"
+     git/push.sh fix "fix the bug"
      # Adds, commits, and pushes automatically
 
   3. When complete, close branch:
@@ -201,7 +218,7 @@ This project uses a Git Flow workflow with protected branches:
      git/hotfix.sh "critical-bug-name"
 
   2. Fix the issue, then push:
-     git/push.sh "Fix critical production bug"
+     git/push.sh fix "fix critical production bug"
      # Adds, commits, and pushes automatically
 
   3. When done, close branch (first time):
@@ -218,13 +235,19 @@ This project uses a Git Flow workflow with protected branches:
 
   1. Ensure all features/bugfixes are merged to dev
 
-  2. Create release (must be on dev branch):
-     git checkout dev
-     git/release.sh patch    # or minor, major
+  2. Create release:
+     - Normal planned release (run from dev):
+       git checkout dev
+       git/release.sh patch    # or minor, major
+
+     - Hotfix release (after hotfix PR merged to main, run from main):
+       git checkout main
+       git/release.sh patch
 
   3. Release script automatically:
      • Merges dev → main
      • Creates tag vX.Y.Z
+     • Publishes GitHub Release (triggers deploy)
      • Pushes main and tag
      • Merges main back into dev
      • Pushes dev
@@ -261,7 +284,7 @@ This project uses a Git Flow workflow with protected branches:
    • All scripts validate branch types
    • git/close.sh checks merge status before deletion
    • git/pr.sh validates branch type vs target
-   • git/release.sh must be run from dev
+   • git/release.sh must be run from dev or main
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ TIPS & BEST PRACTICES                                                        │
@@ -296,10 +319,10 @@ This project uses a Git Flow workflow with protected branches:
   git/feature.sh <name>        Create feature branch from dev
   git/bugfix.sh <name>         Create bugfix branch from dev
   git/hotfix.sh <name>         Create hotfix branch from main
-  git/push.sh "message"        Commit and safely push current branch (blocks main/dev)
+  git/push.sh <type> "<msg>"   Commit and safely push current branch (blocks main/dev)
   git/close.sh                 Close and merge current branch (with merge check)
   git/pr.sh [dev|main]         Create pull request (validates branch type)
-  git/release.sh [type]        Full release automation (dev → main → dev)
+  git/release.sh [type]        Release automation (dev or main)
   git/help.sh                  Show this help (or help for specific command)
 
 For detailed help on any command:
@@ -410,7 +433,9 @@ show_command_help() {
       echo "📤 PUSH COMMAND HELP"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
-      echo "Usage: git/push.sh \"commit message\""
+      echo "Usage:"
+      echo "  git/push.sh <type> \"<message>\""
+      echo "  git/push.sh <type> breaking \"<message>\""
       echo ""
       echo "Commits changes and safely pushes the current branch to remote."
       echo ""
@@ -428,8 +453,9 @@ show_command_help() {
       echo "  • Before closing a branch"
       echo ""
       echo "Examples:"
-      echo "  git/push.sh \"Add user authentication\""
-      echo "  git/push.sh \"Fix login validation bug\""
+      echo "  git/push.sh feat \"add user authentication\""
+      echo "  git/push.sh fix \"prevent double charge\""
+      echo "  git/push.sh feat breaking \"change auth token format\""
       echo ""
       echo "What it does:"
       echo "  1. Auto-detects current branch"
@@ -522,7 +548,7 @@ show_command_help() {
       echo "Automates production releases using semantic versioning."
       echo ""
       echo "Rules:"
-      echo "  • Must be executed from dev branch"
+      echo "  • Must be executed from dev or main branch"
       echo "  • Fails if working tree is dirty"
       echo "  • Finds latest tag (vX.Y.Z)"
       echo "  • Auto-increments version"
@@ -541,15 +567,28 @@ show_command_help() {
       echo "  git/release.sh major    # v1.0.0 → v2.0.0"
       echo ""
       echo "RELEASE FLOW (strict order):"
-      echo "  1. Validate on dev"
-      echo "  2. Calculate new version"
-      echo "  3. Checkout main, pull latest"
-      echo "  4. Merge dev into main"
-      echo "  5. Create tag: vX.Y.Z"
-      echo "  6. Push main and tag"
-      echo "  7. Checkout dev"
-      echo "  8. Merge main back into dev"
-      echo "  9. Push dev"
+      echo "  If run from dev (full release train):"
+      echo "    1. Validate on dev"
+      echo "    2. Calculate new version"
+      echo "    3. Checkout main, pull latest"
+      echo "    4. Merge dev into main"
+      echo "    5. Create tag: vX.Y.Z"
+      echo "    6. Push main and tag"
+      echo "    7. Publish GitHub Release (triggers deploy)"
+      echo "    8. Checkout dev"
+      echo "    9. Merge main back into dev"
+      echo "    10. Push dev"
+      echo ""
+      echo "  If run from main (hotfix-style release):"
+      echo "    1. Validate on main"
+      echo "    2. Calculate new version"
+      echo "    3. Pull latest main"
+      echo "    4. Create tag: vX.Y.Z"
+      echo "    5. Push main and tag"
+      echo "    6. Publish GitHub Release (triggers deploy)"
+      echo "    7. Checkout dev"
+      echo "    8. Merge main back into dev"
+      echo "    9. Push dev"
       echo ""
       echo "Note: Full automation - no manual steps needed!"
       ;;
